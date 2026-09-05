@@ -44,11 +44,14 @@ public class InterestService {
     @Transactional
     public void recordSelection(UUID userId, List<Short> interestIds) {
         Instant now = clock.instant();
-        userInterests.deleteAllInBatch(userInterests.findByUserId(userId));
-        userInterests.saveAll(interestIds.stream()
-                .distinct()
-                .map(id -> new UserInterest(userId, id, now))
-                .toList());
+        List<Short> selected = interestIds.stream().distinct().toList();
+
+        if (selected.isEmpty()) {
+            userInterests.deselectAll(userId);
+            return;
+        }
+        selected.forEach(interestId -> userInterests.select(userId, interestId, now));
+        userInterests.deselectOthers(userId, selected);
     }
 
     public record Suggestions(List<Interest> suggested, List<Interest> all, boolean fromHistory) {}

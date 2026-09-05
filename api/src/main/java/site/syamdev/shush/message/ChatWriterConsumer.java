@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import site.syamdev.shush.common.ApiException;
+import site.syamdev.shush.media.MediaService;
 import site.syamdev.shush.realtime.MessageDispatcher;
 
 /**
@@ -28,12 +29,15 @@ class ChatWriterConsumer {
 
     private final MessageService messages;
     private final MessageDispatcher dispatcher;
+    private final MediaService media;
     private final Counter persisted;
     private final Counter deduplicated;
 
-    ChatWriterConsumer(MessageService messages, MessageDispatcher dispatcher, MeterRegistry meters) {
+    ChatWriterConsumer(MessageService messages, MessageDispatcher dispatcher, MediaService media,
+                       MeterRegistry meters) {
         this.messages = messages;
         this.dispatcher = dispatcher;
+        this.media = media;
         this.persisted = Counter.builder("shush.messages.persisted")
                 .description("chat messages committed to postgres")
                 .register(meters);
@@ -44,6 +48,17 @@ class ChatWriterConsumer {
 
     @KafkaListener(topics = "${shush.kafka.chat-topic}", groupId = "chat-writer")
     void onMessage(ChatMessageEvent event) {
+        // Ask storage, not the client. A message referencing a key whose bytes were never
+        // uploaded would reach every recipient as a picture that is not there, and the check
+        // belongs here rather than at the socket because this is the last point before the
+        // message becomes part of the conversation's permanent order.
+        if (event.mediaKey() != null
+                && !media.confirm(event.mediaKey(), event.conversationId(), event.senderId())) {
+            log.warn("dropping a message for conversation {} whose media was never uploaded",
+                    event.conversationId());
+            return;
+        }
+
         MessageService.Append append;
         try {
             append = messages.append(event.conversationId(), event.senderId(), event.clientMsgId(),

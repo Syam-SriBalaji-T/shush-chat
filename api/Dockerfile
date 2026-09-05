@@ -1,14 +1,16 @@
 # Two stages so the runtime image carries no Maven, no source and no build cache.
 # Build for the deployment architecture explicitly when cross-building from x86 to the ARM box:
-#   docker buildx build --platform linux/arm64 -t shush-api:latest api
+#   docker buildx build --platform linux/arm64 -f api/Dockerfile -t shush-api:latest .
 FROM maven:3.9.12-eclipse-temurin-21 AS build
 WORKDIR /build
 
 # Dependencies resolve in their own layer, so a source-only change does not re-download them.
-COPY pom.xml .
+COPY api/pom.xml .
 RUN mvn -B -q dependency:go-offline
 
-COPY src ./src
+# The build copies web/ into the jar's static resources, so it has to be present.
+COPY web ../web
+COPY api/src ./src
 RUN mvn -B -q clean package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine AS runtime

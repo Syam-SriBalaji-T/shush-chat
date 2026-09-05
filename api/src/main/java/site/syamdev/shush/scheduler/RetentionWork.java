@@ -5,9 +5,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import site.syamdev.shush.media.MediaService;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * The actual SQL behind the sweeps, in plain statements rather than load-then-delete loops:
@@ -18,14 +21,16 @@ import java.time.Instant;
 class RetentionWork {
 
     private final EntityManager entityManager;
+    private final MediaService media;
     private final Clock clock;
     private final Duration anonymousUserRetention;
     private final Duration unconfirmedMediaGrace;
 
-    RetentionWork(EntityManager entityManager, Clock clock,
+    RetentionWork(EntityManager entityManager, MediaService media, Clock clock,
                   @Value("${shush.retention.anonymous-user}") Duration anonymousUserRetention,
                   @Value("${shush.retention.unconfirmed-media}") Duration unconfirmedMediaGrace) {
         this.entityManager = entityManager;
+        this.media = media;
         this.clock = clock;
         this.anonymousUserRetention = anonymousUserRetention;
         this.unconfirmedMediaGrace = unconfirmedMediaGrace;
@@ -78,15 +83,31 @@ class RetentionWork {
      * is either absent or orphaned -- either way nothing will ever reference it.
      */
     @Transactional
+    @SuppressWarnings("unchecked")
     int purgeExpiredMedia() {
         Instant now = clock.instant();
-        return entityManager.createNativeQuery("""
-                        delete from media_objects
+        List<String> keys = entityManager.createNativeQuery("""
+                        select key from media_objects
                         where expires_at <= :now
                            or (status = 'pending' and created_at <= :abandoned)
                         """)
                 .setParameter("now", now)
                 .setParameter("abandoned", now.minus(unconfirmedMediaGrace))
+                .getResultList();
+        if (keys.isEmpty()) {
+            return 0;
+        }
+
+        // The object goes first. Deleting the row first would lose the only record that the
+        // object exists, leaving bytes in the bucket that nothing references and nothing can
+        // find -- so a key whose object storage refuses to delete keeps its row for next time.
+        List<String> deleted = keys.stream().filter(media::deleteObject).toList();
+        if (deleted.isEmpty()) {
+            return 0;
+        }
+
+        return entityManager.createNativeQuery("delete from media_objects where key in (:keys)")
+                .setParameter("keys", deleted)
                 .executeUpdate();
     }
 

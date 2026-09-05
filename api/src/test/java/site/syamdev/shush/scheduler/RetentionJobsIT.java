@@ -39,6 +39,9 @@ class RetentionJobsIT extends AbstractIT {
     private ConversationRepository conversations;
 
     @Autowired
+    private site.syamdev.shush.media.MediaObjectRepository mediaObjects;
+
+    @Autowired
     private jakarta.persistence.EntityManagerFactory entityManagerFactory;
 
     /**
@@ -134,6 +137,31 @@ class RetentionJobsIT extends AbstractIT {
     }
 
     /**
+     * A client that asked for an upload URL and then vanished leaves a pending row and, possibly,
+     * an orphaned object. Neither will ever be referenced by anything, so both have to go.
+     */
+    @Test
+    void anAbandonedUploadIsPurged() {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+        UUID conversationId = testUsers.createConversation(alice, bob);
+
+        String key = rest.exchange("/api/media/upload-url", HttpMethod.POST,
+                        new HttpEntity<>(java.util.Map.of(
+                                "conversationId", conversationId.toString(),
+                                "mime", "image/png",
+                                "sizeBytes", 1024), testUsers.authorised(alice)),
+                        com.fasterxml.jackson.databind.JsonNode.class)
+                .getBody().path("key").asText();
+        assertThat(mediaObjects.findById(key)).isPresent();
+
+        backdateMediaCreation(key);
+        jobs.purgeMedia();
+
+        assertThat(mediaObjects.findById(key)).isEmpty();
+    }
+
+    /**
      * Every replica runs the same timers, so without the lock a purge would run three times at
      * once -- three transactions competing to delete the same rows.
      */
@@ -173,6 +201,14 @@ class RetentionJobsIT extends AbstractIT {
         assertThat(ran.get())
                 .as("contending ticks are skipped, never queued up to run later")
                 .isLessThan(16);
+    }
+
+    private void backdateMediaCreation(String key) {
+        inTransaction(em -> em.createNativeQuery(
+                        "update media_objects set created_at = now() - interval '2 hours' "
+                                + "where key = :key")
+                .setParameter("key", key)
+                .executeUpdate());
     }
 
     private void setPurgeAfterToThePast(UUID conversationId) {

@@ -126,6 +126,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             }
         } catch (ApiException e) {
             replyTo(senderId, new ServerFrame.Error(e.getCode(), e.getMessage(), null));
+        } catch (RuntimeException e) {
+            // Without this the socket is closed on any unexpected failure, so a bug in one
+            // frame handler silently disconnects the user and looks like a network problem
+            // from the client's side. Tell them, keep the connection, and log it properly.
+            log.error("failed to handle a {} frame", parsed.getClass().getSimpleName(), e);
+            replyTo(senderId, new ServerFrame.Error("internal_error",
+                    "something went wrong handling that", null));
         }
     }
 
@@ -139,6 +146,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         try {
             conversations.requireParticipant(send.conversationId(), senderId);
             Message.Kind kind = send.kind() == null ? Message.Kind.TEXT : Message.Kind.fromWire(send.kind());
+            if (kind == Message.Kind.IMAGE && (send.mediaKey() == null || send.mediaKey().isBlank())) {
+                replyTo(senderId, new ServerFrame.Error("missing_media_key",
+                        "an image message needs the key from its upload URL", send.clientMsgId()));
+                return;
+            }
 
             // Block until the broker has acknowledged. Acking "sent" before the log accepted it
             // would be a lie the client cannot detect, and on a virtual thread the wait costs a

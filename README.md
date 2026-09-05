@@ -87,12 +87,12 @@ instance, which is what makes a number credible.
 
 ## Status
 
-Phase 6 of 8 — the guarantee holds across three replicas behind a load balancer, with no
-sticky sessions, while a replica is killed mid-conversation. Interest matching, friends,
-invites, blocks and the retention jobs are in. See `docs/plan.md` §5.
+Phase 7 of 8 — feature-complete. The guarantee holds across three replicas behind a load
+balancer, with no sticky sessions, while a replica is killed mid-conversation. Matching,
+friends, presence, receipts, media and a working test client are all in, and a real browser
+drives the whole journey in `./mvnw verify`. See `docs/plan.md` §5.
 
-What remains is media upload, the single-file test client (Phase 7), and the benchmark on real
-hardware (Phase 8).
+What remains is the benchmark on real hardware (Phase 8).
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
@@ -103,7 +103,7 @@ hardware (Phase 8).
 | 4 | Chaos and correctness | ✅ passing |
 | 5 | Presence, typing, receipts, unread, signup | ✅ passing |
 | 6 | Matching, friends, invites, blocks | ✅ passing |
-| 7 | Media and the test client | — |
+| 7 | Media and the test client | ✅ passing |
 | 8 | Benchmark, README, demo | — |
 
 ## Stack
@@ -138,11 +138,19 @@ Tests:
 cd api && ./mvnw clean verify
 ```
 
-Three replicas behind nginx — the configuration the guarantee is actually claimed for:
+Three replicas behind nginx, with search and object storage — the configuration the guarantee is
+actually claimed for:
 
 ```bash
-docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d --build
+docker compose -f compose.yaml -f compose.replicas.yaml \
+  --profile core --profile search --profile media up -d --build
+
+# nginx resolves upstream hostnames once, at startup. Recreating the replicas gives them new
+# container IPs and nginx keeps dialling the old ones, so restart it whenever they are rebuilt.
+docker compose -f compose.yaml -f compose.replicas.yaml --profile core restart nginx
+
 curl -s localhost:8081/api/health
+open http://localhost:8081/          # the test client
 ```
 
 The invariant harness, against a running stack:
@@ -295,6 +303,19 @@ hashes even when the email is unknown, so a missing account and a wrong password
 time. A chosen name is refused while anonymous, and refused if it is shaped like a generated one,
 so nobody can mint a name indistinguishable from an assigned one.
 
+**Media never touches the API.** The client asks for a presigned PUT scoped to exactly one key,
+uploads the bytes straight to storage, and then sends a message naming the key. The service
+handles kilobytes of metadata instead of megabytes of image, which is why a five-megabyte upload
+does not compete with message delivery for heap, bandwidth or request threads — and why nginx's
+body-size limit is irrelevant here. Reads are a redirect to a presigned GET, for the same reason.
+
+**The row exists before the bytes do.** A `pending` `media_objects` row is written when the URL
+is issued, so an upload the client abandoned is still findable and gets swept up. Before a message
+referencing a key is accepted, the writer asks *storage* whether the object is really there —
+including for its size, because the number in the original request was only ever a claim. A
+message whose image was never uploaded is dropped rather than delivered as a picture that is not
+there.
+
 **Matching.** A waiting user goes into a Redis sorted set and an Elasticsearch `waiting` index,
 and the best-overlapping candidate is claimed by a Lua script that removes *both* ids only if
 *both* are still present. That atomicity is the whole mechanism: two matchers can and do find the
@@ -331,10 +352,21 @@ are periodic sweeps, so a missed run is corrected by the next one, whereas a que
 up faster than it drains the moment one run is slow. The lock is released only by its holder, so
 a node that overran its lease cannot delete a lock another node is relying on.
 
+**The test client.** `web/index.html` — one file, no build step, no framework, no dependencies,
+served by the API itself. That is deliberate: it exists to exercise the protocol end to end and to
+be readable next to the server code, not to be a product. Dark by default, and the choice is
+remembered.
+
+**The journey is asserted in a real browser.** `TestClientJourneyIT` drives two containerised
+Chrome instances through land → pick interests → get matched → talk both ways → ask to keep the
+other person → accept, entirely over the same HTTP and WebSocket protocol a visitor uses. Two
+browsers, because a chat with one participant proves nothing. It runs inside `./mvnw verify`, so
+there is no manual clicking anywhere in this project.
+
 ### Not yet true
 
-Media upload is still to come, and there is no UI beyond the harness (Phase 7). The benchmark
-numbers above are laptop numbers, not the Phase 8 measurement.
+The benchmark numbers above are laptop numbers, not the Phase 8 measurement on dedicated
+hardware.
 
 ## Design decisions
 
@@ -511,6 +543,16 @@ That is honest for a project running with test users, and it is exactly the piec
 would have to exist *before* opening anonymous image-sharing to real strangers — a separate
 undertaking, not a feature toggle.
 
+**nginx does not re-resolve its upstreams.** Open-source nginx resolves upstream hostnames once
+at startup, so recreating the replicas leaves it dialling stale container IPs until it is
+restarted. Resolving per request would fix it but would mean giving up the `least_conn` upstream
+block, which is worth more here. In a real deployment this is what a service registry or an
+ingress controller is for.
+
+**Presigned read URLs are not revocable.** A read URL is valid for five minutes regardless of
+what happens in the meantime — leaving the conversation, or being blocked, does not invalidate
+one already issued. Short expiry is the mitigation, not a fix.
+
 **No authentication on the Redis or Kafka connections.** Both are reachable only on the compose
 network and bound to loopback on the host. That is appropriate for a local stack and would not
 be for a deployment.
@@ -604,6 +646,15 @@ for later review; each is the smallest reasonable choice, not a considered prefe
 - **The matching tick runs on every replica without a lock**, unlike the five retention jobs. It
   only ticks for the users that replica is holding, and the claim is already atomic — a lock here
   would serialise all matching through one replica to prevent a race that is already prevented.
+- **`web/index.html` is copied into the jar at build time** and served by the API, so there is one
+  source of truth and the deployed image is self-contained. The Docker build context is therefore
+  the repository root rather than `api/`.
+- **The client generates `clientMsgId` with a `crypto.getRandomValues` fallback.**
+  `crypto.randomUUID` exists only in a secure context (https or localhost), so on any plain-HTTP
+  deployment it is undefined and every send throws. Found by the browser test, which reaches the
+  app over plain HTTP on a non-localhost host — exactly the case a laptop never exercises.
+- **`GET /api/media/**` returns a 302 to a presigned URL** rather than proxying bytes, and
+  authorises on conversation membership rather than on possession of the key.
 - **Sign-out deletes the device token rather than revoking the JWT.** The JWT stays valid until
   it expires (24 h); revoking it would need a denylist and a lookup on every request, which is a
   real cost for a threat this project does not have. Worth naming rather than pretending.

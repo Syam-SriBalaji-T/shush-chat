@@ -9,7 +9,9 @@
 services:
   api-1: &api
     build:
-      context: ./api
+      # The repo root, not api/, because the image also carries the test client from web/.
+      context: .
+      dockerfile: api/Dockerfile
     image: shush-api:local
     profiles: ["core", "full"]
     depends_on:
@@ -43,7 +45,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1024M
     # No published port. The only way in is nginx, which is the point.
     expose:
       - "8080"

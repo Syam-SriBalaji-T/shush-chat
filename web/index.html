@@ -1,0 +1,710 @@
+<!doctype html>
+<!--
+  Shush test client.
+
+  One file, no build step, no framework, no dependencies. That is deliberate: this exists to
+  exercise the protocol end to end and to be readable next to the server code, not to be a
+  product. A reviewer can read the whole client in one sitting, and there is nothing between
+  what is written here and what the browser runs.
+
+  Dark by default, and the choice is remembered (pre-plan.md 4).
+-->
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shush</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --surface: #161b22;
+      --surface-2: #1f262f;
+      --border: #2b333d;
+      --text: #e6edf3;
+      --muted: #8b98a5;
+      --accent: #6ea8fe;
+      --accent-text: #07101f;
+      --mine: #1e3a5f;
+      --danger: #f0796a;
+    }
+
+    html[data-theme="light"] {
+      --bg: #f6f8fa;
+      --surface: #ffffff;
+      --surface-2: #eef1f4;
+      --border: #d5dbe1;
+      --text: #1a1f24;
+      --muted: #5b6570;
+      --accent: #2b6cb0;
+      --accent-text: #ffffff;
+      --mine: #dbeafe;
+      --danger: #b42318;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    header h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+    header .spacer { flex: 1; }
+
+    main { max-width: 900px; margin: 0 auto; padding: 24px 20px 48px; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
+
+    button {
+      font: inherit;
+      padding: 8px 14px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+
+    input[type="text"], input[type="email"], input[type="password"] {
+      font: inherit;
+      padding: 8px 12px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      width: 100%;
+    }
+
+    .tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+
+    .tile {
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tile[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .muted { color: var(--muted); font-size: 13px; }
+
+    #messages {
+      height: 340px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .msg { max-width: 72%; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); align-self: flex-start; word-wrap: break-word; }
+    .msg.mine { background: var(--mine); align-self: flex-end; }
+    .msg img { max-width: 100%; border-radius: 8px; display: block; }
+    .msg .seq { font-size: 11px; color: var(--muted); margin-left: 8px; }
+
+    .system { align-self: center; font-size: 13px; color: var(--muted); font-style: italic; }
+
+    #friends { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    #friends li { display: flex; align-items: center; gap: 10px; }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+    .dot.online { background: #3fb950; }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Shush</h1>
+  <span class="muted" id="whoami"></span>
+  <span class="spacer"></span>
+  <span class="muted" id="nodeId"></span>
+  <button id="themeToggle" type="button">Light</button>
+</header>
+
+<main>
+  <!-- Step 1: one line, one button, nothing competing for attention. -->
+  <section class="panel" id="landing">
+    <h2>Talk to a stranger who likes what you like</h2>
+    <p class="muted">No sign-up, no email, no form. Pick a couple of things you are into and we will find you someone.</p>
+    <button class="primary" id="startChatting" type="button">Start chatting</button>
+  </section>
+
+  <section class="panel" id="setup" hidden>
+    <h2>What are you into?</h2>
+    <div class="tiles" id="interestTiles"></div>
+    <div class="row" style="margin-bottom: 16px;">
+      <button id="showOthers" type="button">Show others</button>
+    </div>
+
+    <h2>Your name</h2>
+    <div class="row" style="margin-bottom: 20px;">
+      <strong id="displayName"></strong>
+      <button id="shuffleName" type="button">Shuffle</button>
+      <span class="muted" id="shuffleNote"></span>
+    </div>
+
+    <h2>How long will you wait?</h2>
+    <div class="tiles" id="patienceTiles">
+      <button class="tile" type="button" data-patience="5" aria-pressed="true">5 seconds</button>
+      <button class="tile" type="button" data-patience="10" aria-pressed="false">10 seconds</button>
+      <button class="tile" type="button" data-patience="0" aria-pressed="false">As long as it takes</button>
+    </div>
+    <p class="muted" id="patienceNote">If nobody who shares your interests turns up in 5 seconds, we will just find you anyone.</p>
+
+    <button class="primary" id="findSomeone" type="button" disabled>Find someone</button>
+    <span class="muted" id="findStatus"></span>
+  </section>
+
+  <section class="panel" id="chat" hidden>
+    <h2 id="chatHeading">Conversation</h2>
+    <div id="messages"></div>
+    <div class="row" style="margin-top: 12px;">
+      <input type="text" id="composer" placeholder="Say something" autocomplete="off" style="flex: 1;">
+      <button class="primary" id="send" type="button">Send</button>
+      <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+      <button id="attach" type="button">Image</button>
+      <button id="addFriend" type="button">Add friend</button>
+      <button id="leave" type="button">Leave</button>
+    </div>
+    <p class="muted" id="typingIndicator"></p>
+  </section>
+
+  <section class="panel" id="social" hidden>
+    <h2>Friends</h2>
+    <ul id="friends"></ul>
+    <p class="muted" id="noFriends">Nobody yet. Keep someone you enjoyed talking to.</p>
+
+    <h2 style="margin-top: 22px;">Requests</h2>
+    <ul id="requests" style="list-style: none; margin: 0; padding: 0;"></ul>
+
+    <h2 style="margin-top: 22px;">Save your account</h2>
+    <p class="muted" id="savePrompt">
+      Right now the only thing connecting you to this account is this browser. Clear your history
+      or pick up your phone instead, and your friends are gone.
+    </p>
+    <div class="row">
+      <input type="email" id="email" placeholder="you@example.com" style="max-width: 260px;">
+      <input type="password" id="password" placeholder="Password" style="max-width: 200px;">
+      <button id="saveAccount" type="button">Save</button>
+      <span class="muted" id="saveStatus"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+  "use strict";
+
+  const api = (path, options = {}) => {
+    const headers = Object.assign({"Content-Type": "application/json"}, options.headers || {});
+    if (state.jwt) {
+      headers.Authorization = "Bearer " + state.jwt;
+    }
+    return fetch(path, Object.assign({}, options, {headers}));
+  };
+
+  const state = {
+    jwt: null,
+    userId: null,
+    displayName: null,
+    conversationId: null,
+    selectedInterests: [],
+    patience: 5,
+    socket: null,
+    // The client's own guard against seeing a message twice. The server deduplicates writes;
+    // this deduplicates *renders*, because a reconnect can legitimately redeliver.
+    seenSeqs: new Set(),
+    lastTypingSentAt: 0,
+  };
+
+  const el = (id) => document.getElementById(id);
+
+  /**
+   * A v4 UUID, without requiring a secure context.
+   *
+   * crypto.randomUUID exists only on https or localhost, so on any plain-HTTP deployment --
+   * a LAN demo, a staging box, a browser in a container -- it is simply undefined and every
+   * send throws. crypto.getRandomValues has no such restriction, so fall back to it.
+   */
+  const newId = () => {
+    if (typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16)
+      + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+  };
+
+  /* ---------- theme: dark by default, remembered ---------- */
+
+  const applyTheme = (theme) => {
+    document.documentElement.dataset.theme = theme;
+    el("themeToggle").textContent = theme === "dark" ? "Light" : "Dark";
+    try {
+      localStorage.setItem("shush.theme", theme);
+    } catch (ignored) {
+      // Private browsing. The theme simply will not persist, which is not worth failing over.
+    }
+  };
+
+  let storedTheme = "dark";
+  try {
+    storedTheme = localStorage.getItem("shush.theme") || "dark";
+  } catch (ignored) {
+    storedTheme = "dark";
+  }
+  applyTheme(storedTheme);
+
+  el("themeToggle").addEventListener("click", () => {
+    applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- identity ---------- */
+
+  const storedToken = () => {
+    try {
+      return localStorage.getItem("shush.deviceToken");
+    } catch (ignored) {
+      return null;
+    }
+  };
+
+  const rememberToken = (token) => {
+    try {
+      localStorage.setItem("shush.deviceToken", token);
+    } catch (ignored) {
+      // Nothing to do. The account still exists; this browser just will not remember it.
+    }
+  };
+
+  const adoptSession = (session) => {
+    state.jwt = session.jwt;
+    state.userId = session.user.id;
+    state.displayName = session.user.displayName;
+    if (session.token) {
+      rememberToken(session.token);
+    }
+    el("whoami").textContent = session.user.displayName;
+    el("displayName").textContent = session.user.displayName;
+    el("savePrompt").hidden = !session.user.anonymous;
+  };
+
+  const startSession = async () => {
+    const token = storedToken();
+    if (token) {
+      const resumed = await fetch("/api/auth/device", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token}),
+      });
+      if (resumed.ok) {
+        adoptSession(await resumed.json());
+        return;
+      }
+    }
+    const created = await fetch("/api/auth/anonymous", {method: "POST"});
+    adoptSession(await created.json());
+  };
+
+  /* ---------- interests ---------- */
+
+  let allInterests = [];
+
+  const renderInterests = (interests, selected) => {
+    const tiles = el("interestTiles");
+    tiles.innerHTML = "";
+    interests.forEach((interest) => {
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "tile";
+      tile.dataset.interestId = String(interest.id);
+      tile.textContent = interest.label;
+      tile.setAttribute("aria-pressed", selected.includes(interest.id) ? "true" : "false");
+      tile.addEventListener("click", () => toggleInterest(interest.id, tile));
+      tiles.appendChild(tile);
+    });
+  };
+
+  const toggleInterest = (interestId, tile) => {
+    const index = state.selectedInterests.indexOf(interestId);
+    if (index >= 0) {
+      state.selectedInterests.splice(index, 1);
+      tile.setAttribute("aria-pressed", "false");
+    } else {
+      state.selectedInterests.push(interestId);
+      tile.setAttribute("aria-pressed", "true");
+    }
+    el("findSomeone").disabled = state.selectedInterests.length === 0;
+  };
+
+  const loadInterests = async () => {
+    const body = await (await api("/api/interests")).json();
+    allInterests = body.all;
+    state.selectedInterests = body.fromHistory ? body.suggested.map((i) => i.id) : [];
+    renderInterests(body.suggested, state.selectedInterests);
+    el("findSomeone").disabled = state.selectedInterests.length === 0;
+  };
+
+  el("showOthers").addEventListener("click", () => {
+    renderInterests(allInterests, state.selectedInterests);
+    el("showOthers").hidden = true;
+  });
+
+  el("shuffleName").addEventListener("click", async () => {
+    const response = await api("/api/me/shuffle-name", {method: "POST"});
+    if (response.status === 429) {
+      el("shuffleNote").textContent = "One at a time.";
+      return;
+    }
+    const user = await response.json();
+    state.displayName = user.displayName;
+    el("displayName").textContent = user.displayName;
+    el("whoami").textContent = user.displayName;
+    el("shuffleNote").textContent = "";
+  });
+
+  document.querySelectorAll("#patienceTiles .tile").forEach((tile) => {
+    tile.addEventListener("click", () => {
+      document.querySelectorAll("#patienceTiles .tile")
+        .forEach((other) => other.setAttribute("aria-pressed", "false"));
+      tile.setAttribute("aria-pressed", "true");
+      state.patience = Number(tile.dataset.patience);
+      el("patienceNote").textContent = state.patience === 0
+        ? "We will only match you with somebody who actually shares an interest, however long that takes."
+        : "If nobody who shares your interests turns up in " + state.patience
+          + " seconds, we will just find you anyone.";
+    });
+  });
+
+  /* ---------- the socket ---------- */
+
+  const connect = () => new Promise((resolve) => {
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(scheme + "://" + location.host + "/ws/chat?token=" + state.jwt);
+    socket.addEventListener("message", (event) => handleFrame(JSON.parse(event.data)));
+    socket.addEventListener("open", () => resolve(socket));
+    state.socket = socket;
+  });
+
+  const sendFrame = (frame) => state.socket.send(JSON.stringify(frame));
+
+  const handleFrame = (frame) => {
+    switch (frame.type) {
+      case "hello":
+        // Diagnostic only, and worth surfacing: it makes "any node serves any user" visible.
+        el("nodeId").textContent = "served by " + frame.nodeId;
+        break;
+      case "matched":
+        onMatched(frame);
+        break;
+      case "message":
+        onMessage(frame);
+        break;
+      case "typing":
+        showTyping();
+        break;
+      case "presence":
+        addSystemLine(frame.online
+          ? "They are back."
+          : "They have gone offline. Anything you send will reach them when they return.");
+        break;
+      case "left":
+        addSystemLine("They have left. This conversation is over.");
+        break;
+      case "read":
+        el("chatHeading").dataset.readSeq = String(frame.seq);
+        break;
+      case "friendRequested":
+        addRequest(frame);
+        break;
+      case "friendRequestAccepted":
+        addSystemLine("They kept you. They are in your friends list now.");
+        loadFriends();
+        break;
+      case "error":
+        addSystemLine("Something went wrong: " + frame.message);
+        break;
+      default:
+        break;
+    }
+  };
+
+  /* ---------- matching and chat ---------- */
+
+  const onMatched = (frame) => {
+    state.conversationId = frame.conversationId;
+    state.seenSeqs = new Set();
+    el("messages").innerHTML = "";
+    el("setup").hidden = true;
+    el("chat").hidden = false;
+    el("social").hidden = false;
+    el("findStatus").textContent = "";
+
+    // Honest about which kind of match this was.
+    if (frame.randomMatch) {
+      el("chatHeading").textContent = "A random match — nobody sharing your interests was around";
+    } else {
+      const names = (frame.sharedInterestIds || [])
+        .map((id) => (allInterests.find((interest) => interest.id === id) || {}).label)
+        .filter(Boolean);
+      el("chatHeading").textContent = "You both like " + names.join(" and ");
+    }
+    loadFriends();
+  };
+
+  const onMessage = (frame) => {
+    if (state.seenSeqs.has(frame.seq)) {
+      return;
+    }
+    state.seenSeqs.add(frame.seq);
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg" + (frame.senderId === state.userId ? " mine" : "");
+    bubble.dataset.seq = String(frame.seq);
+
+    if (frame.kind === "image" && frame.mediaKey) {
+      const image = document.createElement("img");
+      image.alt = "shared image";
+      image.src = "/api/media/" + encodeURIComponent(frame.mediaKey);
+      bubble.appendChild(image);
+    } else {
+      bubble.appendChild(document.createTextNode(frame.body));
+    }
+
+    const seq = document.createElement("span");
+    seq.className = "seq";
+    seq.textContent = "#" + frame.seq;
+    bubble.appendChild(seq);
+
+    const messages = el("messages");
+    messages.appendChild(bubble);
+    messages.scrollTop = messages.scrollHeight;
+
+    if (frame.senderId !== state.userId) {
+      sendFrame({type: "read", conversationId: state.conversationId, seq: frame.seq});
+    }
+  };
+
+  const addSystemLine = (text) => {
+    const line = document.createElement("div");
+    line.className = "system";
+    line.textContent = text;
+    el("messages").appendChild(line);
+    el("messages").scrollTop = el("messages").scrollHeight;
+  };
+
+  let typingTimer = null;
+  const showTyping = () => {
+    el("typingIndicator").textContent = "They are typing…";
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => {
+      el("typingIndicator").textContent = "";
+    }, 4000);
+  };
+
+  const sendMessage = () => {
+    const body = el("composer").value.trim();
+    if (!body || !state.conversationId) {
+      return;
+    }
+    sendFrame({
+      type: "send",
+      conversationId: state.conversationId,
+      // Generated here and reused on retry, so the server's dedup constraint can do its job.
+      clientMsgId: newId(),
+      kind: "text",
+      body,
+    });
+    el("composer").value = "";
+  };
+
+  el("send").addEventListener("click", sendMessage);
+  el("composer").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      sendMessage();
+    }
+  });
+
+  el("composer").addEventListener("input", () => {
+    // Throttled here as well as at the server. Sending one of these per keystroke is how this
+    // feature takes a chat service down.
+    const now = Date.now();
+    if (state.conversationId && now - state.lastTypingSentAt > 3000) {
+      state.lastTypingSentAt = now;
+      sendFrame({type: "typing", conversationId: state.conversationId});
+    }
+  });
+
+  el("leave").addEventListener("click", () => {
+    if (state.conversationId) {
+      sendFrame({type: "leave", conversationId: state.conversationId});
+      addSystemLine("You left.");
+    }
+  });
+
+  el("findSomeone").addEventListener("click", async () => {
+    el("findStatus").textContent = "Looking…";
+    await api("/api/interests/mine", {
+      method: "PUT",
+      body: JSON.stringify({interestIds: state.selectedInterests}),
+    });
+    sendFrame({type: "find", interestIds: state.selectedInterests, patience: state.patience});
+  });
+
+  /* ---------- images ---------- */
+
+  el("attach").addEventListener("click", () => el("imageInput").click());
+
+  el("imageInput").addEventListener("change", async () => {
+    const file = el("imageInput").files[0];
+    if (!file || !state.conversationId) {
+      return;
+    }
+
+    // The bytes never go to the API. It hands back a URL scoped to one key and the browser
+    // uploads straight to storage.
+    const response = await api("/api/media/upload-url", {
+      method: "POST",
+      body: JSON.stringify({
+        conversationId: state.conversationId,
+        mime: file.type,
+        sizeBytes: file.size,
+      }),
+    });
+    if (!response.ok) {
+      addSystemLine("That image was refused: " + (await response.json()).message);
+      return;
+    }
+
+    const upload = await response.json();
+    await fetch(upload.uploadUrl, {
+      method: "PUT",
+      headers: {"Content-Type": file.type},
+      body: file,
+    });
+
+    sendFrame({
+      type: "send",
+      conversationId: state.conversationId,
+      clientMsgId: newId(),
+      kind: "image",
+      mediaKey: upload.key,
+    });
+    el("imageInput").value = "";
+  });
+
+  /* ---------- friends ---------- */
+
+  el("addFriend").addEventListener("click", async () => {
+    if (!state.conversationId) {
+      return;
+    }
+    const response = await api(
+      "/api/conversations/" + state.conversationId + "/friend-request", {method: "POST"});
+    addSystemLine(response.ok
+      ? "Asked to keep them. You will hear back only if they say yes."
+      : "You have already asked.");
+  });
+
+  const addRequest = (frame) => {
+    const item = document.createElement("li");
+    item.className = "row";
+    item.textContent = "Someone would like to keep you.";
+
+    const accept = document.createElement("button");
+    accept.textContent = "Accept";
+    accept.addEventListener("click", async () => {
+      await api("/api/friend-requests/" + frame.requestId + "/accept", {method: "POST"});
+      item.remove();
+      loadFriends();
+    });
+
+    const decline = document.createElement("button");
+    decline.textContent = "Decline";
+    decline.addEventListener("click", async () => {
+      await api("/api/friend-requests/" + frame.requestId + "/decline", {method: "POST"});
+      item.remove();
+    });
+
+    item.append(accept, decline);
+    el("requests").appendChild(item);
+  };
+
+  const loadFriends = async () => {
+    const friends = await (await api("/api/friends")).json();
+    const list = el("friends");
+    list.innerHTML = "";
+    el("noFriends").hidden = friends.length > 0;
+
+    friends.forEach((friend) => {
+      const item = document.createElement("li");
+      const dot = document.createElement("span");
+      dot.className = "dot" + (friend.online ? " online" : "");
+      item.appendChild(dot);
+      item.appendChild(document.createTextNode(friend.displayName || "Someone"));
+      list.appendChild(item);
+    });
+  };
+
+  /* ---------- saving the account ---------- */
+
+  el("saveAccount").addEventListener("click", async () => {
+    const response = await api("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({email: el("email").value, password: el("password").value}),
+    });
+    if (!response.ok) {
+      el("saveStatus").textContent = (await response.json()).message;
+      return;
+    }
+    adoptSession(await response.json());
+    el("saveStatus").textContent = "Saved. Nothing reset — same name, same friends.";
+  });
+
+  /* ---------- go ---------- */
+
+  el("startChatting").addEventListener("click", async () => {
+    el("startChatting").disabled = true;
+    await startSession();
+    await loadInterests();
+    await connect();
+    el("landing").hidden = true;
+    el("setup").hidden = false;
+  });
+</script>
+</body>
+</html>

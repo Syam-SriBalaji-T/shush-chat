@@ -144,6 +144,18 @@ shush:
     # Retried often enough that a five-second patience window has plenty of chances, and cheaply
     # enough that it costs nothing: each node only ticks for the users it is holding.
     tick: 500ms
+  storage:
+    endpoint: ${SHUSH_S3_ENDPOINT:http://localhost:9000}
+    region: ${SHUSH_S3_REGION:us-east-1}
+    bucket: ${SHUSH_S3_BUCKET:shush-media}
+    access-key: ${SHUSH_S3_ACCESS_KEY:shushadmin}
+    secret-key: ${SHUSH_S3_SECRET_KEY:shushadmin}
+    # A presigned URL is a bearer credential for one key. Five minutes is plenty for an upload
+    # and short enough that a leaked one is not an open write endpoint.
+    upload-url-ttl: 5m
+    max-bytes: 5242880
+    anonymous-retention: 24h
+    saved-retention: 30d
   retention:
     anonymous-user: 30d
     unconfirmed-media: 1h

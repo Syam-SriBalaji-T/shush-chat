@@ -62,6 +62,8 @@ class SecurityConfig {
                         .requestMatchers("/api/auth/**", "/api/health", "/api/health/**").permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/interests").permitAll()
+                        // The single-file test client. It authenticates itself once it loads.
+                        .requestMatchers(HttpMethod.GET, "/", "/index.html", "/favicon.ico").permitAll()
                         // The handshake authenticates itself: the JWT arrives in the query
                         // string, which no Authorization-header filter can read.
                         .requestMatchers("/ws/**").permitAll()

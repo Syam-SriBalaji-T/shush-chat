@@ -26,3 +26,13 @@ shush:
     reconcile-unread: 24h
   matching:
     tick: 200ms
+  name:
+    # Widened from the production 1s: the behaviour under test is that a second shuffle inside
+    # the window is refused, not the exact duration, and a one-second window is a race against
+    # how long two HTTP calls happen to take.
+    shuffle-interval: 30s
+  storage:
+    # Filled in from the MinIO container at runtime; these are the container's own defaults.
+    access-key: minioadmin
+    secret-key: minioadmin
+    bucket: shush-media-test

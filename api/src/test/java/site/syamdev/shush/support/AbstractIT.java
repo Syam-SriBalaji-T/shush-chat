@@ -8,6 +8,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.redpanda.RedpandaContainer;
 
@@ -24,6 +25,7 @@ import org.testcontainers.redpanda.RedpandaContainer;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@org.springframework.context.annotation.Import(MinioProperties.class)
 public abstract class AbstractIT {
 
     @ServiceConnection
@@ -43,8 +45,13 @@ public abstract class AbstractIT {
                     .withEnv("xpack.security.enabled", "false")
                     .withEnv("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
 
+    /** Wired in through {@link MinioProperties}, since Boot has no factory for an S3 endpoint. */
+    public static final MinIOContainer MINIO =
+            new MinIOContainer("minio/minio:RELEASE.2025-09-07T16-13-09Z");
+
     static {
         POSTGRES.start();
+        MINIO.start();
         REDIS.start();
         REDPANDA.start();
         ELASTICSEARCH.start();
