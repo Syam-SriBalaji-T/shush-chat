@@ -1,5 +1,10 @@
 # Overlay: three application replicas behind nginx.
 #
+# SHUSH_JWT_SECRET has an obviously-fake default here and nowhere else. The application itself
+# has none, so a real deployment fails to start rather than signing tokens with a value anyone
+# reading this repository already knows -- but a reviewer cloning this and running one command
+# must not be stopped by a secret they have no way to guess. Set it in .env for anything real.
+#
 #   docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d --build
 #
 # Three replicas from day one is not decoration (aim.md R4). Cross-node fanout is the problem
@@ -30,7 +35,7 @@ services:
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
-      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # Replicas run infrastructure they did not start; they must never try to manage it.
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
@@ -69,7 +74,7 @@ services:
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
-      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
       # single-node default of 12 gives the group 36 members for 12 partitions -- 24 of them
@@ -88,7 +93,7 @@ services:
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
-      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
       # single-node default of 12 gives the group 36 members for 12 partitions -- 24 of them

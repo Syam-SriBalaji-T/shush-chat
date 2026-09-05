@@ -96,7 +96,7 @@ final class ChaosBench {
         return Thread.ofVirtual().start(() -> {
             try {
                 TimeUnit.SECONDS.sleep(options.killAtSecond());
-                Chaos.kill(options.killNode());
+                Chaos.kill(options.composeProject(), options.killNode());
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {

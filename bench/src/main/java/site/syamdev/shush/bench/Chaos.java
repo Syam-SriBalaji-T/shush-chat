@@ -15,8 +15,8 @@ final class Chaos {
     private Chaos() {
     }
 
-    static void kill(String service) throws IOException, InterruptedException {
-        String container = containerNameOf(service);
+    static void kill(String project, String service) throws IOException, InterruptedException {
+        String container = containerNameOf(project, service);
         Process process = new ProcessBuilder("docker", "kill", container)
                 .redirectErrorStream(true)
                 .start();
@@ -33,15 +33,19 @@ final class Chaos {
         System.out.printf("!! killed %s%n", container);
     }
 
-    static void restart(String service) throws IOException, InterruptedException {
-        new ProcessBuilder("docker", "start", containerNameOf(service))
+    static void restart(String project, String service) throws IOException, InterruptedException {
+        new ProcessBuilder("docker", "start", containerNameOf(project, service))
                 .redirectErrorStream(true)
                 .start()
                 .waitFor(60, TimeUnit.SECONDS);
     }
 
-    /** Compose names containers {@code <project>-<service>-<index>}; the project here is "shush". */
-    private static String containerNameOf(String service) {
-        return "shush-" + service + "-1";
+    /**
+     * Compose names containers {@code <project>-<service>-<index>}. The project defaults to the
+     * directory name, so it is a flag rather than a constant -- a stack brought up from a clone
+     * in a differently-named directory is still killable.
+     */
+    private static String containerNameOf(String project, String service) {
+        return project + "-" + service + "-1";
     }
 }

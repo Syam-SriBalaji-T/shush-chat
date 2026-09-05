@@ -16,6 +16,7 @@ record BenchOptions(String mode,
                     int messages,
                     boolean assertMultinode,
                     String killNode,
+                    String composeProject,
                     int killAtSecond,
                     Duration sendWindow,
                     Duration settleTimeout) {
@@ -48,6 +49,7 @@ record BenchOptions(String mode,
                 messages,
                 Boolean.parseBoolean(flags.getOrDefault("assert-multinode", "false")),
                 flags.get("kill-node"),
+                flags.getOrDefault("compose-project", "shush"),
                 Integer.parseInt(flags.getOrDefault("at-second", "15")),
                 // Chaos runs spread their sends over a window by default. Firing everything as
                 // fast as possible finishes in a second or two, so a kill scheduled for later

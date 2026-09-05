@@ -122,6 +122,8 @@ public final class Main {
                   --assert-multinode     fail unless at least two nodes served the run
                   --kill-node=SERVICE    compose service to kill, e.g. api-2 (chaos mode)
                   --at-second=N          when to kill it (default 15)
+                  --compose-project=NAME  compose project prefix for the container to kill
+                                          (default "shush")
                   --settle-seconds=N     how long to wait for delivery to finish (default 120)
                 """);
     }

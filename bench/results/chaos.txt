@@ -1,0 +1,60 @@
+=== chaos run 1 ===
+
+---------------------------------------------
+messages        25000
+wall clock      58.30s
+throughput      429 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+reconnects      34 socket reconnection(s) after the kill
+retransmits     34 message(s) resent with the same clientMsgId
+---------------------------------------------
+no reordering across the kill   ok
+no duplicate deliveries         ok
+nothing lost                    ok
+every send in the log once      ok
+resume returns what was missed  ok
+the kill actually disturbed it  ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+
+=== chaos run 2 ===
+
+---------------------------------------------
+messages        25000
+wall clock      83.67s
+throughput      299 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+reconnects      29 socket reconnection(s) after the kill
+retransmits     29 message(s) resent with the same clientMsgId
+---------------------------------------------
+no reordering across the kill   ok
+no duplicate deliveries         ok
+nothing lost                    ok
+every send in the log once      ok
+resume returns what was missed  ok
+the kill actually disturbed it  ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+
+=== chaos run 3 ===
+
+---------------------------------------------
+messages        25000
+wall clock      59.54s
+throughput      420 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+reconnects      26 socket reconnection(s) after the kill
+retransmits     26 message(s) resent with the same clientMsgId
+---------------------------------------------
+no reordering across the kill   ok
+no duplicate deliveries         ok
+nothing lost                    ok
+every send in the log once      ok
+resume returns what was missed  ok
+the kill actually disturbed it  ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+

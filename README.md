@@ -1,561 +1,501 @@
 # Shush
 
-Real-time 1:1 chat. Strangers are matched on shared interests, talk, and can keep each
-other as friends.
+Real-time 1:1 chat. Strangers are matched on shared interests, talk, and can keep each other as
+friends.
 
-**This is a portfolio and interview artifact, not a product.** Its purpose is to make one
-claim and then prove it:
+**This is a portfolio and interview artifact, not a product.** Its purpose is to make one claim
+and then prove it:
 
 > Strict per-conversation total ordering with effectively-exactly-once delivery, across N
-> stateless nodes, verified by an automated harness that asserts zero reordering, zero
-> duplicates and zero loss — including while a node is killed mid-run.
+> stateless nodes, verified by an automated harness that asserts zero reordering, zero duplicates
+> and zero loss — including while a node is killed mid-run.
 
 Everything else in the system exists to force that problem into the open.
 
-## The guarantee, stated precisely
-
-**For any conversation C, there exists one total order over the messages of C, and every
-observer sees exactly that order.** Concretely, for all messages in C:
-
-1. **Dense sequencing.** Each message carries a `seq` that is unique within C, and the set of
-   assigned `seq` values is exactly `1..n` with no gaps.
-2. **Agreement between observers.** Both participants' sockets receive messages in ascending
-   `seq` order, and the durable history endpoint returns the same order after any reload.
-3. **Exactly-once effect.** A message with a given `clientMsgId` is persisted at most once and
-   delivered to each participant at most once, however many times the client retries it or the
-   broker redelivers it.
-
-**Preconditions.** The order is defined by the order in which the broker accepted the messages,
-not by wall-clock send time — there is no global clock and two concurrent senders on different
-machines have no meaningful "true" order to recover. The guarantee holds while `chat.messages`
-is keyed by `conversationId` and the partition count is not changed under a live conversation;
-increasing partitions re-keys existing conversations onto different partitions and breaks it.
-
-**Where it is enforced.** One conversation → one partition (the key) → one consumer thread (the
-`chat-writer` group) → one writer. `seq` is claimed with `UPDATE conversations SET last_seq =
-last_seq + 1 ... RETURNING`, in the same transaction as the insert, so a rolled-back write
-releases its number rather than leaving a gap. Deduplication is the
-`messages_conversation_sender_client_msg_id_key` unique constraint — a database guarantee, not
-application logic.
-
-**What proves it.** `bench/`, run against a live stack through nginx, with clients landing on
-whichever of three replicas `least_conn` gives them.
-
-*Ordering mode* — both participants sending as fast as the socket allows:
-
-```
-50 conversations · 200 messages each · 100 concurrent sockets · 10,000 messages
-nodes serving [api-1, api-2, api-3]
-wall clock 16.7–53.2s over four runs · 188–598 msg/s end to end
-no gaps in seq           ok
-identical order observed ok
-no duplicate deliveries  ok
-nothing lost             ok
+```bash
+git clone <this repo> && cd shush-chat
+docker compose -f compose.yaml -f compose.replicas.yaml --profile full up -d --build
+open http://localhost:8081/
 ```
 
-`--assert-multinode` fails the run unless at least two nodes actually served it, so a
-misconfigured stack cannot pass by quietly being single-node. That flag is itself checked
-against a one-node run, where it correctly fails.
-
-*Chaos mode* — the same invariants, with `docker kill` on a replica 15 seconds in, while
-traffic is still flowing:
-
-```
-50 conversations · 500 messages each · 100 sockets · 25,000 messages
-api-2 killed at second 15, mid-send
-22-37 socket reconnections, each retransmitting its unacked message, over five runs
-no reordering across the kill   ok
-no duplicate deliveries         ok
-nothing lost                    ok
-every send in the log once      ok
-resume returns what was missed  ok
-the kill actually disturbed it  ok
-```
-
-`docker kill`, not `docker stop`: a SIGKILL gives the process no chance to drain sockets or
-commit consumer offsets. Correctness must not depend on a dying node behaving politely, and a
-graceful stop would quietly be testing the easy case.
-
-These are laptop figures — three JVMs plus Postgres, Redis and Redpanda in Docker on WSL, with
-the load generator on the same machine — and the spread between runs shows it. The chaos-mode
-throughput is lower still because that run deliberately *paces* its sends over 40 s so the kill
-lands mid-flight; it is an offered rate, not a ceiling. None of these are the headline
-benchmark; Phase 8 produces that on dedicated hardware with the load generator on a separate
-instance, which is what makes a number credible.
+Nine containers, no configuration, no account anywhere. Details in [§8](#8-one-command-to-run-it).
 
 ---
 
-## Status
+## Contents
 
-Phase 7 of 8 — feature-complete. The guarantee holds across three replicas behind a load
-balancer, with no sticky sessions, while a replica is killed mid-conversation. Matching,
-friends, presence, receipts, media and a working test client are all in, and a real browser
-drives the whole journey in `./mvnw verify`. See `docs/plan.md` §5.
+1. [The guarantee](#1-the-guarantee)
+2. [Architecture](#2-architecture)
+3. [The hard problems](#3-the-hard-problems)
+4. [Design decisions](#4-design-decisions)
+5. [Benchmarks](#5-benchmarks)
+6. [The correctness harness](#6-the-correctness-harness)
+7. [Known limitations](#7-known-limitations)
+8. [One command to run it](#8-one-command-to-run-it)
 
-What remains is the benchmark on real hardware (Phase 8).
+Plus [Open Choices](#open-choices) — decisions taken where the specification was silent.
 
-| Phase | What it lands | State |
-| ----- | ------------- | ----- |
-| 0 | Spike: Spring Boot 3 on virtual threads, Flyway, Testcontainers | ✅ passing |
-| 1 | Identity, domain, single-node chat | ✅ passing |
-| 2 | The ordering guarantee + harness v1 | ✅ passing |
-| 3 | Horizontal scale + harness v2 | ✅ passing |
-| 4 | Chaos and correctness | ✅ passing |
-| 5 | Presence, typing, receipts, unread, signup | ✅ passing |
-| 6 | Matching, friends, invites, blocks | ✅ passing |
-| 7 | Media and the test client | ✅ passing |
-| 8 | Benchmark, README, demo | — |
+---
 
-## Stack
+## 1. The guarantee
 
-`api/` Java 21 + Spring Boot 3 (Spring MVC on virtual threads, not WebFlux) · Maven ·
-Postgres 16 · Redis 7 · Redpanda · Elasticsearch 8 · MinIO · Prometheus + Grafana ·
-nginx. Rationale for each, with the rejected alternatives, is in `docs/aim.md` §4.
+**For any conversation C, there exists one total order over the messages of C, and every observer
+sees exactly that order.** Concretely:
 
-## Running it
+1. **Dense sequencing.** Each message carries a `seq` unique within C, and the assigned values are
+   exactly `1..n` with no gaps.
+2. **Agreement between observers.** Both participants' sockets receive messages in ascending `seq`
+   order, and the durable history endpoint returns the same order after any reload.
+3. **Exactly-once effect.** A message with a given `clientMsgId` is persisted at most once and
+   delivered to each participant at most once, however many times the client retries it or the
+   broker redelivers it.
+4. **Survives node loss.** All of the above continue to hold while a replica is killed outright,
+   mid-conversation, with traffic flowing.
 
-Infrastructure runs in Docker; the application under development runs on the host, so a
-debugger attaches and restarts are instant.
+### Preconditions, stated honestly
 
-```bash
-cp .env.example .env                    # then set SHUSH_JWT_SECRET
-docker compose --profile core up -d     # postgres (redis + redpanda from Phase 2)
-cd api && ./mvnw spring-boot:run        # :8080
+- **The order is the order the broker accepted the messages in**, not wall-clock send time. There
+  is no global clock, and two concurrent senders on different machines have no "true" order to
+  recover. What is guaranteed is that *everyone agrees* on the order that was chosen.
+- **`chat.messages` must stay keyed by `conversationId`**, and its partition count must not change
+  under a live conversation. Adding partitions re-hashes keys, so a conversation could move
+  partition while messages for it are still in flight on the old one, and two consumers would then
+  be writing it at once.
+- **Durability starts at the `sent` ack, not at the send.** A node can die between reading a frame
+  from a socket and producing it. That message really is lost, and recovering it is the client's
+  job — retransmit the unacked `clientMsgId`, which the dedup constraint makes safe.
+- **Delivery, not durability, depends on Redis.** With Redis down, messages are still committed and
+  sequenced correctly and history serves them; nothing is pushed to a live socket.
+
+### Where it is enforced
+
+One conversation → one partition (the key) → one consumer thread (the `chat-writer` group) → one
+writer. `seq` is claimed with `UPDATE conversations SET last_seq = last_seq + 1 ... RETURNING`, in
+the same transaction as the insert, so a rolled-back write releases its number rather than leaving
+a gap. Deduplication is the `messages_conversation_sender_client_msg_id_key` unique constraint — a
+database guarantee, not application logic.
+
+---
+
+## 2. Architecture
+
+```
+                          ┌──────────────────────────────┐
+     Browser ── WSS ──────►            nginx             │
+                          │   least_conn, no stickiness  │
+                          └───┬──────────┬──────────┬────┘
+                              │          │          │
+                        ┌─────▼───┐ ┌────▼────┐ ┌───▼─────┐
+                        │  api-1  │ │  api-2  │ │  api-3  │   Spring Boot 3,
+                        │         │ │         │ │         │   virtual threads
+                        └──┬───┬──┘ └──┬───┬──┘ └──┬───┬──┘
+                produce ───┘   └──sub──┤   └──sub──┤   └── sub
+                    │                  │           │
+            ┌───────▼────────┐  ┌──────▼───────────▼──────┐
+            │    Redpanda    │  │          Redis          │
+            │ chat.messages  │  │  pub/sub · presence     │
+            │ key=convId     │  │  typing  · match pool   │
+            │ 12 partitions  │  │  job locks              │
+            └───────┬────────┘  └─────────────────────────┘
+                    │ consume (group: chat-writer)
+            ┌───────▼────────┐  ┌──────────────┐  ┌──────────────┐
+            │   PostgreSQL   │  │Elasticsearch │  │ MinIO  /  S3 │
+            │  system of     │  │   matching   │  │    media     │
+            │    record      │  └──────────────┘  └──────────────┘
+            └────────────────┘
 ```
 
-`SHUSH_JWT_SECRET` has no default and must be at least 32 bytes — the app refuses to start
-without it rather than signing tokens with a value anyone reading this repository knows.
-Generate one with `openssl rand -base64 48`. The app reads `.env` directly, so exporting it
-by hand is not necessary.
+**The send path.** A client's frame is *produced* to Redpanda keyed by `conversationId` and acked
+`sent`. The `chat-writer` consumer group — the only writer to `messages` — assigns the sequence
+number, commits, and publishes to Redis. Whichever node holds a recipient's socket receives it
+there and writes it out. The socket handler never inserts, because a controller that writes is the
+dual write this design exists to remove.
 
-`./mvnw` is the committed Maven wrapper — use it rather than a system `mvn`. Spring Boot's
-Docker Compose support will start the `core` profile for you on `spring-boot:run` if it is
-not already up.
+**Nodes are interchangeable.** A node subscribes to `user:{userId}` on Redis while it holds one of
+that user's sockets, so it listens only for the users actually connected to it. Nothing is sticky,
+nothing addresses a node, and a client that reconnects usually lands somewhere else.
 
-Tests:
+**Ownership of state.** Postgres is the system of record. Redis holds only derived state that must
+not outlive a restart — presence, typing, the match pool, scheduler locks. Elasticsearch holds only
+who is waiting. Media lives in object storage and never passes through the API.
+
+---
+
+## 3. The hard problems
+
+### 3.1 Per-conversation ordering under concurrent producers
+
+Two participants send at once from different nodes; every observer must see the same total order.
+Solved by making the topic the write-ahead log and the partition key the conversation id, so
+ordering is a property of the topology rather than of locking discipline. A dense `seq` is claimed
+in the same transaction as the insert.
+
+### 3.2 At-least-once transport, exactly-once effect
+
+Networks drop, clients retry, consumers redeliver. `clientMsgId` is generated by the client and
+stable across its retries; the unique constraint is the enforcement point, and `ON CONFLICT DO
+NOTHING` with a zero row count is the detection. A duplicate is acked with the original `seq` and
+deliberately not delivered a second time.
+
+### 3.3 WebSocket fanout across replicas
+
+User A holds a socket on node 1, user B on node 3, and node 1 has no route to B. Solved with a
+Redis pub/sub backplane and a per-node registry that is the last hop only. Same-node delivery takes
+the identical path — see [§4.2](#42-no-sticky-sessions) for why the obvious shortcut is a trap.
+
+### 3.4 Presence and typing at keystroke rates
+
+Presence is a Redis key with a TTL, renewed every 15 s and expiring after 45 s: presence asserted
+by a key that must be renewed cannot outlive the process renewing it, so a dead node self-corrects
+and no cleanup job exists. Typing is throttled at the *server* with a `SET NX` window, not only at
+the client — a client with a bug should not be able to melt the datastore.
+
+### 3.5 Media without bytes through the API
+
+Presigned PUT scoped to one key, direct to storage, then a HEAD from the writer before the message
+is accepted. The row is written before the bytes exist so an abandoned upload is still findable and
+gets swept up, and the size is taken from storage because the client's number was only a claim.
+
+### 3.6 Unread counts without hammering the database
+
+Maintained by the writer, never a `COUNT(*)` at read time. The read cursor only moves forward, so a
+slower second device cannot resurrect read messages. A maintained counter drifts, so a nightly job
+recomputes it — a deliberate eventual-consistency trade, named rather than hidden.
+
+### 3.7 Interest matching
+
+Term overlap over a controlled vocabulary, scored by Elasticsearch, with the exclusions and the
+tie-break on waiting time in the same query. The pair is claimed by a Lua script that removes both
+ids only if both are still present, because two matchers finding the same third person is the
+expected case and exactly one must win.
+
+---
+
+## 4. Design decisions
+
+### 4.1 Redpanda as the write-ahead log, not a database write followed by a publish
+
+**Chosen.** The message is produced first. A single consumer group is the only writer to Postgres
+and also triggers fanout.
+
+**Rejected: write to Postgres, then produce.** A dual write to two systems that cannot be made
+atomic. Die between the commit and the produce and the message is durable but never delivered — the
+worst failure available, because the sender was already acked. Fixing it properly needs a
+transactional outbox plus a relay, which is strictly more machinery than moving the write behind
+the log.
+
+**Rejected: write to Postgres only, fan out directly.** Ordering then depends on which node's
+transaction commits first — a race between concurrent senders with no arbiter, so two participants
+can observe different orders. `SERIALIZABLE` plus a per-conversation advisory lock could recover
+it, at the cost of serialising every send on a database lock, and the ordering would still be
+invisible to any later consumer.
+
+**What the chosen design costs.** A broker round trip before the `sent` ack. Delivery is
+asynchronous relative to the request, so the client needs the two-stage ack to tell durable from
+sequenced. And the broker is a hard dependency for sending at all — the system fails closed with
+`produce_failed` rather than accepting a message it cannot order.
+
+### 4.2 No sticky sessions
+
+**Chosen.** `least_conn`, no affinity of any kind. Any replica serves any user; authentication is a
+stateless JWT and there is no server-side session.
+
+**Rejected: `ip_hash` or a sticky cookie.** The reflex answer, and it does make the immediate
+problem disappear. It also means a node dying takes its users' sessions with it, that everyone
+behind one corporate NAT pins to one replica, that scaling out does not rebalance existing
+connections, and — worst — that the cross-node path is never exercised in normal operation, so it
+rots undetected. Stickiness converts a routing problem into an availability problem.
+
+**Rejected: a shared connection registry** (user → node) with nodes forwarding to each other. It
+works, and it adds a lookup on the delivery path, a consistency problem after a crash, and
+node-to-node addressing — the very thing that makes replicas non-interchangeable.
+
+**Rejected: round-robin.** WebSocket connections are long-lived and disconnect unevenly, so
+balancing at assignment time drifts over a long run. `least_conn` tracks what is actually open.
+
+**The cost, honestly.** Every message crosses Redis even when both participants are on the same
+node. That is deliberate: a same-node shortcut is an easy optimisation and a bad one, because the
+local path is the one that always works in development, so cross-node delivery would break silently
+and only surface under a load balancer. One path means a bug is a bug everywhere.
+
+### 4.3 Elasticsearch for matching, not embeddings
+
+**Chosen.** An inverted index over a controlled tag vocabulary, doing the ranking, the exclusions
+and the tie-break in one query.
+
+**Rejected: pgvector / ANN search.** Both sides of a match draw from the same fixed tag list, so
+there is no semantic gap for vectors to close. It would put an embedding model in the request path
+— latency, an external dependency, model drift — to approximate a set intersection that can be
+computed exactly.
+
+**Where that flips.** The moment the input stops being a controlled vocabulary: free-text bios,
+cross-language matching, or "find users like this user" derived from behaviour. Those are genuine
+semantic-similarity problems where an inverted index performs badly, and pgvector becomes the right
+answer instead.
+
+### 4.4 Java 21 on virtual threads, not WebFlux
+
+**Chosen.** Spring MVC with `spring.threads.virtual.enabled`, asserted by a test so it cannot be
+silently dropped. Blocking-style code, one virtual thread per request, true multi-core parallelism
+in one process, and a shared heap so the connection registry and presence cache stay node-local
+instead of becoming a network hop.
+
+**Rejected: WebFlux.** Reactive was the old answer to high-concurrency I/O on the JVM and it costs
+a great deal in debuggability — stack traces stop being meaningful and every library in the chain
+must be non-blocking or the benefit evaporates. Loom gets the same scalability with code that is
+readable and profileable. WebFlux would still win for true end-to-end streaming backpressure.
+
+**The honest counterpoint on Go**, since it is the obvious alternative for this workload: cheaper
+goroutines, lower memory per connection, faster startup, single-binary deploys, no GC to reason
+about. What the JVM bought here was the reference Kafka client, a mature Elasticsearch client, and
+a much better profiling story for a project whose deliverable is a measurement.
+
+### 4.5 Per-user ordered delivery — a bug the harness caught
+
+The first three-replica run failed on exactly one invariant: two participants in one conversation
+out of fifty disagreed about the order of messages 165 and 166. Sequence numbers were dense and
+correct and the database was correct; only the order frames reached the sockets differed.
+
+Spring's `RedisMessageListenerContainer` dispatches each received message to a task executor, so
+two frames arriving on one channel raced each other to the socket. Nothing about it was visible on
+a single node, where fanout had been a synchronous write from the writer thread. It needed three
+replicas, a load balancer and 10,000 messages to appear once.
+
+The fix is two-part: the container delivers on its receiving thread, preserving per-channel receive
+order, and the listener hands off to a **chain of tasks per user** rather than a shared pool — so
+ordering is guaranteed within a user and nothing is promised between users, which is exactly what
+the guarantee claims. A striped thread pool would have been simpler, but one slow socket would then
+stall every user sharing its stripe; virtual threads make a chain per connected user cost almost
+nothing.
+
+### 4.6 One row per friendship, and the ordering bug inside it
+
+`friendships` stores each pair once with the ids in a fixed order, enforced by a check constraint —
+storing both directions makes "are these two friends?" a question with two answers that eventually
+disagree.
+
+The first implementation ordered the pair with `UUID.compareTo`, and roughly half of all friend
+requests failed with a constraint violation, at random. **Java compares a UUID's halves as signed
+longs; Postgres compares the sixteen bytes unsigned.** For any pair differing in the top bit the two
+disagree. The database owns the constraint, so the ordering has to match the database.
+
+Worth naming because it is the shape of bug that survives review: the code reads correctly, the test
+that would catch it passes half the time, and the failure looks like flakiness.
+
+---
+
+## 5. Benchmarks
+
+Full raw output, hardware and method: [`bench/results/`](bench/results/).
+
+| Mode | Messages | Sockets | Wall clock | End-to-end throughput | Invariants |
+| ---- | -------- | ------- | ---------- | --------------------- | ---------- |
+| ordering | 10,000 | 100 | 17.8–34.6 s | 289–563 msg/s | all held, 3/3 runs |
+| chaos | 25,000 | 100 | 58.3–83.7 s | 299–429 msg/s | all held, 3/3 runs |
+
+**Method.** Three api replicas behind nginx, plus Postgres, Redis, Redpanda, Elasticsearch and
+MinIO, brought up from a clean clone with one command. 50 conversations, both participants sending
+concurrently, 100 sockets. Chaos mode kills `api-2` outright fifteen seconds in, while sends are
+still in flight.
+
+**What these numbers are not.** The load generator runs on the same machine as the system under
+test, so they measure the pair together — and the spread between otherwise identical runs shows it.
+Chaos throughput is lower because that mode deliberately *paces* its sends over a 40 s window so the
+kill lands mid-flight; it is an offered rate, not a ceiling.
+
+**They are evidence that the invariants hold, not a throughput claim.** A credible throughput number
+needs dedicated hardware with the load generator on a separate instance in the same availability
+zone — otherwise you are measuring the load generator. That run is documented in
+[`docs/deploy.md`](docs/deploy.md) §3 and has not been performed yet; the headline figure will be
+filled in from it, and nothing in this table will be restated as one.
+
+---
+
+## 6. The correctness harness
+
+`bench/` is a standalone program that shares **no code with `api/`**. It speaks only the public
+HTTP and WebSocket protocol, so a bug in a shared serialisation or ordering helper cannot cancel
+itself out across both sides.
+
+### What it asserts
+
+**Ordering mode** — both participants sending as fast as the socket allows:
+
+| Invariant | Meaning |
+| --------- | ------- |
+| no gaps in `seq` | every value `1..n` exactly once; a gap is a lost write, a repeat a double one |
+| identical order observed | *arrival* order matches between the two sockets, not just contents |
+| no duplicate deliveries | no `clientMsgId` reaches a socket twice |
+| nothing lost | sent == observed == persisted, and the persisted history is `1..n` in order |
+
+**Chaos mode** — the same, with a replica killed mid-send:
+
+| Invariant | Meaning |
+| --------- | ------- |
+| no reordering across the kill | neither observer's stream ever goes backwards |
+| no duplicate deliveries | retransmission does not become a second message |
+| nothing lost | the log holds exactly `1..n` |
+| every send in the log once | every acknowledged `clientMsgId` is persisted exactly once |
+| resume returns what was missed | a reconnecting client can fetch precisely its gap, in order |
+| the kill actually disturbed it | fails if no socket reconnected |
+
+### Why it can be trusted
+
+- **`docker kill`, not `docker stop`.** A SIGKILL gives the process no chance to drain sockets or
+  commit offsets. Correctness must not depend on a dying node behaving politely, and a graceful stop
+  would quietly test the easy case.
+- **Sends are ack-aware.** A message counts as sent only when the server acks it, and unacked ones
+  are retransmitted with the *same* `clientMsgId` — so the dedup constraint is genuinely exercised
+  rather than assumed. Counting a socket write as a send would report loss that is really the
+  client's failure to retry.
+- **It has its own tests.** `InvariantsTest` (17 of them) feeds each check a stream that violates it and
+  asserts the violation is reported. A harness that cannot fail would make a green run meaningless.
+- **Its "did this prove anything" guards are themselves checked.** `--assert-multinode` was run
+  against a single node and the chaos mode against an already-dead replica; both correctly fail
+  rather than passing vacuously. `--assert-multinode` has already caught a real misconfiguration —
+  stale nginx upstreams sending all 100 sockets to one replica.
+
+### And in the build
+
+`./mvnw clean verify` runs 169 integration tests against real Postgres, Redis, Redpanda,
+Elasticsearch and MinIO via Testcontainers. **Nothing is mocked, and the broker never will be:**
+partition assignment is exactly the behaviour a mock removes, and it is the behaviour the whole
+claim rests on. Two of those tests start a *second* full application context against the same
+infrastructure to prove cross-node fanout and cross-node matching; two more drive the real client
+through two containerised browsers.
+
+---
+
+## 7. Known limitations
+
+**A message read from a socket but not yet produced is lost if that node dies.** The window is
+sub-millisecond and a correct client recovers by retransmitting the unacked `clientMsgId`, but the
+recovery is the *client's* responsibility. The `sent` ack is the durability boundary; nothing before
+it is a promise.
+
+**Ordering is per conversation and nothing more.** No ordering between conversations, and none
+between a message and, say, a friend request. Deliberate — a global order means a single partition
+and no horizontal scale — but "Alice's message arrived before Bob's" is only meaningful within one
+conversation.
+
+**Increasing the partition count breaks the guarantee for existing conversations.** It is set to 12
+up front for that reason. Changing it safely needs a drain-and-migrate, which is not implemented.
+
+**Redis is a hard dependency for delivery, though not for durability.** No fallback path, on
+purpose — a same-node shortcut would reintroduce the two-path problem in §4.2.
+
+**Consumer failure detection is tuned to 10 s, not zero.** Between a node dying and the group
+noticing, its partitions are stranded: those conversations accept sends but nothing is written or
+delivered until the rebalance completes. Lowering it further trades against evicting healthy
+consumers during a GC pause.
+
+**A partition stalls rather than dropping a record it cannot write.** Spring Kafka's default error
+handler retries ten times and then skips the record — silent loss under database pressure. The
+writer retries indefinitely instead, so a persistent failure pauses the conversations on that
+partition. That is the right trade for this claim, but one bad dependency can stop one twelfth of
+conversations rather than degrading all of them evenly.
+
+**Backpressure terminates rather than degrades.** A client 1 MB behind has its socket closed.
+Correct for chat — reconnect and re-sync is cheap — but a very slow network can produce a reconnect
+loop, and there is no server-side backoff discouraging it.
+
+**The unread counter drifts by design.** Marking a conversation read zeroes the counter even when
+the cursor moved to a point in the middle, so messages after that point stop being counted. The
+nightly reconciliation job is what puts it back.
+
+**Presence is per user, not per device**, and a user whose last node dies stays "online" for up to
+the remaining TTL.
+
+**Matching ranking is BM25 over tag terms, not a tuned relevance model.** It does not weight rare
+interests above common ones, so matching on "music" counts the same as matching on "volunteering".
+
+**A blocked user is excluded from matching but not ejected from an existing conversation.**
+
+**Reports are recorded, not acted on.** No moderation queue, nothing reads the table. Honest for a
+project running with test users — and exactly the work that would have to exist *before* opening
+anonymous image-sharing to real strangers. That is a separate undertaking, not a feature toggle.
+
+**nginx does not re-resolve its upstreams.** Open-source nginx resolves upstream hostnames once at
+startup, so recreating the replicas leaves it dialling stale container IPs until restarted.
+Resolving per request would mean giving up the `least_conn` upstream block.
+
+**Presigned read URLs are not revocable.** Valid for five minutes regardless of what happens
+meanwhile; leaving a conversation or being blocked does not invalidate one already issued.
+
+**Sign-out deletes the device token rather than revoking the JWT**, which stays valid for up to 24 h.
+Revocation would need a denylist and a lookup on every request.
+
+**No authentication on the Redis, Kafka or object-storage connections.** Reachable only on the
+compose network and bound to loopback on the host. Appropriate for a local stack, not for a
+deployment.
+
+---
+
+## 8. One command to run it
+
+```bash
+docker compose -f compose.yaml -f compose.replicas.yaml --profile full up -d --build
+```
+
+Nine containers: three api replicas, nginx, Postgres, Redis, Redpanda, Elasticsearch and MinIO.
+No `.env`, no account with any provider, no configuration. Then open **http://localhost:8081/**,
+click *Start chatting*, and open a second browser to talk to yourself.
+
+`SHUSH_JWT_SECRET` has an obviously-fake default in the compose overlay and *nowhere else* — the
+application itself has none, so a real deployment fails to start rather than signing tokens with a
+value anyone reading this repository already knows.
+
+### Tests
 
 ```bash
 cd api && ./mvnw clean verify
 ```
 
-Three replicas behind nginx, with search and object storage — the configuration the guarantee is
-actually claimed for:
+169 integration tests and 11 unit tests against real infrastructure. First run pulls container
+images, including a browser.
+
+### The harness
 
 ```bash
-docker compose -f compose.yaml -f compose.replicas.yaml \
-  --profile core --profile search --profile media up -d --build
-
-# nginx resolves upstream hostnames once, at startup. Recreating the replicas gives them new
-# container IPs and nginx keeps dialling the old ones, so restart it whenever they are rebuilt.
+# the dev endpoint lets the harness open conversations without going through matching;
+# it is off by default so an ordinary run cannot be driven this way
+SHUSH_DEV_ENDPOINTS=true docker compose -f compose.yaml -f compose.replicas.yaml \
+  --profile full up -d --build
 docker compose -f compose.yaml -f compose.replicas.yaml --profile core restart nginx
 
-curl -s localhost:8081/api/health
-open http://localhost:8081/          # the test client
-```
+cd bench && ./mvnw clean package && cd ..
 
-The invariant harness, against a running stack:
-
-```bash
-cd bench && ./mvnw clean package
-
-# single node on the host
-java -jar bench/target/shush-bench.jar --mode=ordering --conversations=50 --messages=200
-
-# through nginx, across three replicas
 java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
      --conversations=50 --messages=200 --assert-multinode
-# exits 0 only if all four invariants hold AND at least two nodes served the run
 
-# and with a replica killed 15 seconds in, mid-send
 java -jar bench/target/shush-bench.jar --mode=chaos --via=nginx \
      --kill-node=api-2 --at-second=15 --conversations=50 --messages=500
-# exits 0 only if nothing was lost, duplicated or reordered across the failure
 ```
 
-Chaos mode leaves the replica dead. Bring it back with
-`docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d` before the next
-run — the harness fails a run in which nothing reconnected, so a second run against an
-already-dead node reports that rather than passing vacuously.
+Both exit 0 only if every invariant held. Chaos mode leaves the replica dead; bring it back with
+`docker compose ... up -d` before the next run.
 
-Metrics, if you want to watch it happen:
+### Development
+
+Infrastructure in Docker, the application on the host so a debugger attaches:
+
+```bash
+cp .env.example .env                                    # set SHUSH_JWT_SECRET
+docker compose -f compose.yaml --profile full up -d
+cd api && ./mvnw spring-boot:run                        # :8080
+```
+
+### Metrics
 
 ```bash
 docker compose -f compose.yaml -f compose.replicas.yaml -f compose.observability.yaml \
-  --profile core up -d
-# Grafana on :3001, Prometheus on :9090, scraping each replica separately
+  --profile full up -d
 ```
 
-The harness has its own tests (`InvariantsTest`, 17 of them) that feed each check a stream
-violating it and assert it reports the violation — a harness that cannot fail would make a green
-run meaningless. The two "did this run prove anything" guards are checked the same way:
-`--assert-multinode` is run against a single node, and the chaos mode is run against an
-already-dead replica. Both correctly fail rather than passing vacuously.
+Grafana on :3001, Prometheus on :9090, scraping each replica separately — an aggregate would hide
+the thing worth seeing, which is whether load is actually spread across replicas.
 
-Integration tests run against real Postgres via Testcontainers. Nothing is mocked — from
-Phase 2 onward that matters, because partition assignment is exactly the behaviour a mock
-would remove.
-
-## What exists so far
-
-**Identity.** `POST /api/auth/anonymous` mints a user with a generated *Adjective Noun*
-display name, returns an opaque 32-byte device token (only its SHA-256 is stored) and a
-24 h HS256 JWT. `POST /api/auth/device` exchanges the device token for a fresh JWT on the
-same user row — so a returning browser keeps its name, and later its friends and history.
-Signing up in Phase 5 will set `email` on that same row; nothing is copied or migrated,
-which is why nothing resets.
-
-**Names.** Two committed 200-word lists give 40,000 combinations. Allocation is optimistic:
-propose, insert, let the unique index on `users.display_name` decide, retry on conflict.
-Checking availability first would be a check-then-act race across nodes, and the index has
-to be the authority anyway. `NameAllocationIT` runs 1,000 concurrent allocations and asserts
-1,000 distinct names.
-
-**Interests.** 28 seeded tags. `GET /api/interests` returns the five most popular to a new
-visitor and the caller's own last-used five to a returning one.
-
-**Chat.** `GET /ws/chat?token=<jwt>` — the JWT travels in the query string because a browser
-WebSocket cannot set an `Authorization` header, so a handshake interceptor authenticates the
-upgrade before the socket opens. A `send` frame is validated for membership, assigned the
-next `seq`, persisted and fanned out. Frames are camelCase JSON over a sealed interface, so
-the handler's switch is exhaustive at compile time.
-
-**The log.** A send is *produced* to Redpanda topic `chat.messages`, keyed by `conversationId`,
-with `acks=all` and an idempotent producer. The socket handler never writes to `messages`. The
-`chat-writer` consumer group is the only writer, and because the key is the conversation id,
-every message for one conversation lands on one partition and is handled by one thread.
-
-**Two-stage ack.** `sent` when the log accepts the message — it will not be lost. `delivered`
-once the writer has committed it and assigned a `seq` — the first moment anything can say where
-it sits in the order. Collapsing these into one ack would mean either lying about durability or
-withholding the ack until after a database round trip.
-
-**Sequencing and dedup.** `UPDATE conversations SET last_seq = last_seq + 1 ... RETURNING`
-takes the row lock that serialises concurrent senders, in the same transaction as the insert,
-so a rolled-back write cannot leave a gap. `clientMsgId` dedup is the
-`messages_conversation_sender_client_msg_id_key` unique constraint — the insert uses
-`ON CONFLICT DO NOTHING` and treats a zero row count as the duplicate signal, because raising
-the violation would abort the transaction and leave nothing readable. A duplicate is acked with
-the original `seq` and deliberately **not** delivered again.
-
-**History.** `GET /api/conversations/{id}/messages?before=<seq>&limit=<n>` — cursored on
-`seq`, not an offset, so a page stays stable while messages keep arriving underneath.
-
-**Cross-node fanout.** A node subscribes to `user:{userId}` on Redis while it holds one of that
-user's sockets, and drops the subscription when the last one closes — so a node listens only for
-the users actually connected to it, and adding replicas does not multiply backplane traffic. The
-writer publishes every message and every `delivered` ack to the recipients' channels, whichever
-node is holding them.
-
-**Ordered delivery.** Frames for one user are written to their sockets in the order they arrived
-from the backplane, via a per-user chain of tasks on virtual threads. See the design decision
-below — this is where the one genuinely subtle bug in the project lived.
-
-**Backpressure.** Sessions are wrapped in a `ConcurrentWebSocketSessionDecorator` with a 1 MB
-buffer and a 10 s send time limit. A client that cannot drain frames fast enough has its socket
-terminated rather than buffered indefinitely; it reconnects and re-syncs from history, which is
-cheap, whereas an unbounded buffer takes every other user on that node down with it.
-
-**Heartbeat.** Every socket is pinged every 30 s, comfortably inside nginx's `proxy_read_timeout`,
-because a quiet conversation is completely normal and must not lose its connection.
-
-**Resume.** `GET /api/conversations/{id}/messages?after=<seq>` returns everything a returning
-client missed, oldest first. It is the same index as scrollback, walked in the other direction,
-and it is what makes a terminated or killed socket a non-event rather than a hole in the
-conversation.
-
-**Failure handling.** A killed node's sockets reconnect through the load balancer and land on a
-different replica. Its Kafka partitions are reassigned to the survivors; a message that was
-mid-write is redelivered and absorbed by the dedup constraint. A message the node had read from
-the socket but not yet produced is genuinely lost — and the client, which never saw its `sent`
-ack, retransmits it with the same `clientMsgId`.
-
-**Graceful shutdown.** A *planned* stop drains sockets with `GOING_AWAY` first, so clients
-reconnect immediately instead of waiting for a TCP timeout. That is a deploy nicety, not a
-correctness mechanism, which is exactly why the harness kills rather than stops.
-
-**Presence.** `presence:{userId}` in Redis, renewed every 15 s and expiring after 45 s. The TTL
-*is* the design: presence asserted by a key that has to be renewed cannot outlive the process
-renewing it, so a node dying is self-correcting and no cleanup job exists. Two missed renewals
-before anyone is marked away, so a GC pause does not flicker someone offline. A friends list
-resolves in one `MGET` rather than one call per friend.
-
-**Offline is not leaving.** Losing connection publishes a `presence` frame and the conversation
-stays open, because they might come back and anything sent meanwhile is waiting when they do.
-Deliberately leaving publishes a `left` frame, ends the conversation, and schedules it for purge.
-pre-plan.md §3 makes the two visibly different to the other person, so they are different frames.
-
-**Typing indicators, throttled server-side.** `typing:{convId}:{userId}` with a 5 s TTL, gated by
-a separate 3 s `SET NX` throttle key. Typing fires on keystrokes and is by far the
-highest-frequency thing in the protocol — the client is asked to send at most one every three
-seconds and the server enforces the same bound rather than trusting it, because a client with a
-bug should not be able to melt the datastore. Sending a message clears the indicator.
-
-**Unread counts and read receipts.** The counter is maintained by the writer, never a
-`COUNT(*)` at read time — that is the query that collapses first as a conversation grows. The read
-cursor only ever moves forward, so a second device reading more slowly cannot drag it backwards
-and resurrect read messages; a read that does not move the cursor fires no receipt, so receipts
-do not go off on every scroll.
-
-**Saving an account.** `POST /api/auth/signup` attaches an email and password to the row the
-caller already has. Nothing is created, copied or migrated — same id, same name, same
-conversations — which is the whole mechanism behind "everything transfers, nothing resets". Login
-hashes even when the email is unknown, so a missing account and a wrong password take the same
-time. A chosen name is refused while anonymous, and refused if it is shaped like a generated one,
-so nobody can mint a name indistinguishable from an assigned one.
-
-**Media never touches the API.** The client asks for a presigned PUT scoped to exactly one key,
-uploads the bytes straight to storage, and then sends a message naming the key. The service
-handles kilobytes of metadata instead of megabytes of image, which is why a five-megabyte upload
-does not compete with message delivery for heap, bandwidth or request threads — and why nginx's
-body-size limit is irrelevant here. Reads are a redirect to a presigned GET, for the same reason.
-
-**The row exists before the bytes do.** A `pending` `media_objects` row is written when the URL
-is issued, so an upload the client abandoned is still findable and gets swept up. Before a message
-referencing a key is accepted, the writer asks *storage* whether the object is really there —
-including for its size, because the number in the original request was only ever a claim. A
-message whose image was never uploaded is dropped rather than delivered as a picture that is not
-there.
-
-**Matching.** A waiting user goes into a Redis sorted set and an Elasticsearch `waiting` index,
-and the best-overlapping candidate is claimed by a Lua script that removes *both* ids only if
-*both* are still present. That atomicity is the whole mechanism: two matchers can and do find the
-same third person at the same instant, losing is normal and cheap — the loser stays in the pool
-and retries on the next tick — but both winning would put one person in two conversations at once.
-`ConcurrentClaimIT` asserts exactly one winner, a hundred times.
-
-**The patience dial is honest.** Five or ten seconds means "try for a shared interest, then give
-me anyone"; zero means "only somebody who actually shares one, however long that takes". A random
-match is stored as `matched_on = null` and the `matched` frame says `randomMatch: true`, because
-presenting a random match as an interest match is a small lie the user notices the moment they
-start talking.
-
-**Why Elasticsearch and not embeddings.** Matching is term overlap over a controlled vocabulary
-— a lexical retrieval problem, which is what an inverted index is for, and it does the ranking,
-the exclusions (blocked either way, already friends, yourself) and the tie-break on waiting time
-in one query. Both sides draw from the same fixed tag list, so there is no semantic gap for
-vectors to close, and approximate nearest-neighbour search would put an embedding model in the
-request path to approximate a set intersection that can be computed exactly. That flips the
-moment the input stops being a controlled vocabulary — free-text bios, cross-language matching,
-"find users like this user" derived from behaviour — and that is where pgvector becomes the right
-answer instead.
-
-**Keeping someone.** A friend request works during the conversation *and* after it has ended,
-which is the point: it is the one thing that still works once someone has left, so a good chat is
-not lost because the other person closed their laptop first. Accepting keeps the conversation
-forever; declining says nothing at all and cannot be re-asked, because the row stays and the
-unique constraint refuses a second one. A conversation nobody asked to keep is deleted, along
-with everything said in it.
-
-**Five scheduled sweeps, each on one replica.** Every node runs the same timers, so a Redis lock
-with a TTL decides which one actually runs. A contending tick is *skipped*, never queued: these
-are periodic sweeps, so a missed run is corrected by the next one, whereas a queue of them piles
-up faster than it drains the moment one run is slow. The lock is released only by its holder, so
-a node that overran its lease cannot delete a lock another node is relying on.
-
-**The test client.** `web/index.html` — one file, no build step, no framework, no dependencies,
-served by the API itself. That is deliberate: it exists to exercise the protocol end to end and to
-be readable next to the server code, not to be a product. Dark by default, and the choice is
-remembered.
-
-**The journey is asserted in a real browser.** `TestClientJourneyIT` drives two containerised
-Chrome instances through land → pick interests → get matched → talk both ways → ask to keep the
-other person → accept, entirely over the same HTTP and WebSocket protocol a visitor uses. Two
-browsers, because a chat with one participant proves nothing. It runs inside `./mvnw verify`, so
-there is no manual clicking anywhere in this project.
-
-### Not yet true
-
-The benchmark numbers above are laptop numbers, not the Phase 8 measurement on dedicated
-hardware.
-
-## Design decisions
-
-### Redpanda as the write-ahead log, not a database write followed by a publish
-
-**Chosen.** The client's message is produced to `chat.messages` first. A single consumer group
-is the only writer to Postgres, and it also triggers fanout.
-
-**Rejected: write to Postgres, then produce.** This is a dual write to two systems that cannot
-be made atomic. If the process dies between the commit and the produce, the message is durable
-but never delivered and never appears on anyone's socket — the worst failure mode available,
-because the sender was already acked. Fixing it properly needs a transactional outbox plus a
-relay, which is strictly more machinery than moving the write behind the log.
-
-**Rejected: write to Postgres only, fan out directly.** Ordering then depends on which node's
-transaction commits first, which is a race between concurrent senders on different machines
-with no arbiter. Two participants can and will observe different orders. `SERIALIZABLE` plus a
-per-conversation advisory lock could recover it, at the cost of serialising every send on a
-database lock — and the ordering would still be invisible to any later consumer.
-
-**What the chosen design costs, honestly.** A send now takes a broker round trip before the
-`sent` ack, adding latency a direct insert would not. Message delivery is asynchronous relative
-to the request, so the client needs the two-stage ack to distinguish durable from sequenced.
-And the broker is a new operational dependency that must be up for chat to work at all — the
-system fails closed on `produce_failed` rather than accepting a message it cannot order.
-
-**Why this is the right trade here.** Ordering under concurrent producers is the project's
-central claim, and this design makes it a property of the topology (one key → one partition →
-one consumer) rather than something enforced by locking discipline that a future change could
-quietly break.
-
-### No sticky sessions, and why that is the interesting part
-
-**Chosen.** nginx balances with `least_conn` and no affinity of any kind. Any replica serves any
-user. Authentication is a stateless JWT, there is no server-side session, and a client that
-reconnects will usually land on a different node — which is fine, because nothing about a user
-lives on the node holding their socket except the socket itself.
-
-**Rejected: `ip_hash` or a sticky cookie.** This is the reflex answer to "user A is on node 1 and
-user B is on node 3", and it does make the immediate problem disappear. It also means a node
-dying takes its users' sessions with it rather than letting them reconnect anywhere; that users
-behind one corporate NAT all pin to one replica; that scaling out does not rebalance existing
-connections; and that the cross-node path is never exercised in normal operation, so it rots
-undetected. Stickiness converts a routing problem into an availability and load-distribution
-problem.
-
-**Rejected: a shared connection registry in Redis** (user → node), with nodes forwarding directly
-to each other. It works, but it adds a lookup on the delivery path, a consistency problem when
-the registry disagrees with reality after a crash, and node-to-node addressing — which is the
-thing that makes replicas non-interchangeable. Pub/sub already solves routing without anyone
-needing to know where anyone is.
-
-**Why round-robin was rejected too.** WebSocket connections are long-lived and disconnect
-unevenly. Round-robin balances at assignment time, so over a long run the distribution drifts;
-`least_conn` tracks what is actually open.
-
-**The cost, honestly.** Every message crosses Redis even when both participants are on the same
-node — an avoidable hop in the common case. That is deliberate: a same-node shortcut is an easy
-optimisation and a bad one, because the local path is the one that always works in development,
-so cross-node delivery would break silently and only surface under a load balancer. One path
-means a bug is a bug everywhere. It also makes Redis a hard dependency for delivery, though not
-for durability — messages already committed are never lost by a Redis failure, only undelivered
-until the client refetches history.
-
-### One row per friendship, and the ordering bug that hid in it
-
-`friendships` stores each pair once, with the ids in a fixed order so the primary key can enforce
-that — storing both directions would make "are these two friends?" a question with two answers
-that eventually disagree. A check constraint asserts the order.
-
-The first implementation ordered the pair with `UUID.compareTo`, and roughly half of all friend
-requests failed with a constraint violation, at random. **Java compares a UUID's two halves as
-signed longs; Postgres compares the sixteen bytes unsigned.** For any pair differing in the top
-bit the two disagree, so a pair ordered in Java and then checked by the database is rejected —
-non-deterministically, because the ids are random. The database owns the constraint, so the
-ordering has to match the database. `FriendshipTest` pins it with a pair chosen to differ in
-exactly that bit.
-
-It is worth naming because it is the shape of bug that survives review: the code reads correctly,
-the test that would catch it passes half the time, and the failure looks like flakiness.
-
-### Per-user ordered delivery — a bug the harness caught
-
-The first three-replica run failed on exactly one invariant: two participants in one conversation
-out of fifty disagreed about the order of messages 165 and 166. Sequence numbers were dense and
-correct, and the database was correct — only the order in which frames reached the two sockets
-differed.
-
-The cause was that Spring's `RedisMessageListenerContainer` dispatches each received message to a
-task executor, so two frames arriving on one channel raced each other to the socket. Nothing
-about it was visible on a single node, because fanout there had been a synchronous write from the
-writer thread. It needed three replicas, a load balancer and 10,000 messages to appear once.
-
-The fix is two-part: the container now delivers on its receiving thread, preserving per-channel
-receive order, and the listener immediately hands off to a **chain of tasks per user** rather than
-a shared pool — so ordering is guaranteed within a user and nothing is promised between users,
-which is exactly what the guarantee actually claims. A striped thread pool would have been
-simpler, but one slow socket would then stall every user sharing its stripe; virtual threads make
-a chain per connected user cost almost nothing, so there is no reason to accept that.
-
-`CrossNodeFanoutIT.aBurstAcrossNodesArrivesInOneOrderOnBothSockets` is the regression test, and
-it runs in `./mvnw verify` against two real application contexts sharing one Postgres, Redis and
-broker.
-
-## Architecture
-
-Full diagram lands in Phase 3, once cross-node fanout exists. The shape it is being built
-towards is in `docs/plan.md` §1.
-
-## Known Limitations
-
-Written down because naming where your own design breaks is the point of the exercise.
-
-**A message read from a socket but not yet produced is lost if that node dies.** The window is
-sub-millisecond and the client recovers by retransmitting an unacked `clientMsgId`, but the
-recovery is the *client's* responsibility — a client that does not track unacked sends will
-silently drop that message. The `sent` ack is the durability boundary and nothing before it is
-a promise.
-
-**Ordering is per conversation and nothing more.** There is no ordering between conversations,
-and none between a message and, say, a friend request. That is deliberate — a global order would
-mean a single partition and no horizontal scale at all — but it means "Alice's message arrived
-before Bob's" is only meaningful within one conversation.
-
-**Increasing the partition count breaks the guarantee for existing conversations.** Adding
-partitions re-hashes keys, so a conversation can move to a different partition while messages
-for it are still in flight on the old one, and two consumers can then be writing it at once. It
-is set to 12 up front for that reason. Changing it safely needs a drain-and-migrate, which is
-not implemented.
-
-**Redis is a hard dependency for delivery, though not for durability.** If Redis is unavailable,
-messages are still committed and sequenced correctly and history serves them, but nothing is
-pushed to a live socket. There is no fallback path, deliberately — a same-node shortcut would
-reintroduce the two-path problem described above.
-
-**Consumer failure detection is tuned to 10 s, not to zero.** Between a node dying and the group
-noticing, its partitions are stranded: those conversations accept sends (the log takes them) but
-nothing is written or delivered until the rebalance completes. Lowering it further trades
-against evicting healthy consumers during a GC pause.
-
-**The unread counter is maintained, not derived.** It is incremented by the writer rather than
-counted at read time, which is the entire point, but it can drift: marking a conversation read
-sets the counter to zero even when the cursor was moved to a point in the middle, so messages
-after that point stop being counted. That is the tradeoff `plan.md` §3.5 chose, and it is why a
-nightly reconciliation job is specified — that job is Phase 6 and is not implemented yet.
-
-**Presence is per user, not per device.** Closing one of three tabs does not mark you offline,
-which is correct, but presence also cannot tell anyone *which* device you are on, and a user
-whose last node dies stays "online" for up to the remaining TTL.
-
-**A partition stalls rather than dropping a record it cannot write.** Spring Kafka's default
-error handler retries ten times and then skips the record — silent message loss under database
-pressure. The writer instead retries indefinitely, so a persistent failure pauses the
-conversations on that partition until it clears. That is the deliberate trade for a system whose
-claim is that nothing is lost, but it does mean one bad dependency can stop one twelfth of
-conversations rather than degrading all of them evenly.
-
-**Backpressure terminates rather than degrades.** A client 1 MB behind has its socket closed.
-That is correct for a chat service — reconnect and re-sync is cheap — but it means a very slow
-network can produce a reconnect loop, and there is no exponential backoff on the server side to
-discourage it.
-
-**Matching ranking is BM25 over tag terms, not a tuned relevance model.** More shared tags
-scores higher and ties break on who has waited longest, which is defensible and simple. It does
-not weight rare interests above common ones, so matching two people on "music" counts the same
-as matching them on "volunteering" — a real scoring function would not treat those equally.
-
-**A blocked user is excluded from matching but not from an existing conversation.** Blocking
-removes the friendship and stops future matches, but the two are not forcibly removed from a
-conversation they are already in; the blocker has to leave it.
-
-**Reports are recorded, not acted on.** There is no moderation queue and nothing reads the table.
-That is honest for a project running with test users, and it is exactly the piece of work that
-would have to exist *before* opening anonymous image-sharing to real strangers — a separate
-undertaking, not a feature toggle.
-
-**nginx does not re-resolve its upstreams.** Open-source nginx resolves upstream hostnames once
-at startup, so recreating the replicas leaves it dialling stale container IPs until it is
-restarted. Resolving per request would fix it but would mean giving up the `least_conn` upstream
-block, which is worth more here. In a real deployment this is what a service registry or an
-ingress controller is for.
-
-**Presigned read URLs are not revocable.** A read URL is valid for five minutes regardless of
-what happens in the meantime — leaving the conversation, or being blocked, does not invalidate
-one already issued. Short expiry is the mitigation, not a fix.
-
-**No authentication on the Redis or Kafka connections.** Both are reachable only on the compose
-network and bound to loopback on the host. That is appropriate for a local stack and would not
-be for a deployment.
+---
 
 ## Documentation
 
@@ -565,107 +505,73 @@ be for a deployment.
 | `docs/pre-plan.md` | Every product behaviour, in plain English |
 | `docs/plan.md` | Data model, mechanisms, phases, exit criteria |
 | `docs/deploy.md` | Hosting, cost, benchmark procedure, nginx changes |
+| `bench/results/` | Raw harness output, hardware, and how to reproduce it |
 
 ---
 
 ## Open Choices
 
-Decisions taken by the implementer because the specification did not cover them. Listed
-for later review; each is the smallest reasonable choice, not a considered preference.
+Decisions taken by the implementer because the specification did not cover them. Each is the
+smallest reasonable choice, not a considered preference.
 
-- **Postgres is published on host port `55432`, not `5432`.** The development machine runs
-  a native Windows PostgreSQL service bound to `0.0.0.0:5432`, which prevents Docker from
-  binding loopback `5432` at all (`/forwards/expose returned unexpected status: 500`). The
-  container-side port is unchanged; only the host publication moved, and it is overridable
-  with `POSTGRES_PORT`. Picking a non-default host port also avoids the same collision on a
-  reviewer's machine, which is common.
-- **`GET /api/health` delegates to the Actuator health endpoint** rather than returning a
-  constant `{"status":"UP"}`, and answers `503` when the status is not `UP`. The exit
-  criterion only asked for the JSON shape, but a load-balancer probe that cannot fail is
-  worse than none.
-- **The Phase 0 spike lives in its own `spike` package with its own Flyway migration**
-  (`V1__spike_records.sql`). Migrations are forward-only, so Phase 1 drops that table in a
-  new migration rather than editing `V1`.
-- **Maven wrapper is script-only** (`distributionType=only-script`), so no `maven-wrapper.jar`
-  binary is committed.
-- **`plan.md` §2.2 lists both `unique (conversation_id, seq)` and `index (conversation_id,
-  seq desc)` on `messages`; only the unique constraint is created.** A btree scans backwards
-  as cheaply as forwards, so the descending index would duplicate the constraint's index and
-  cost a second write per message for nothing. Trivially added later if a plan shows otherwise.
-- **Conversations are created by a flag-guarded dev endpoint** (`POST /api/dev/conversations`,
-  off unless `shush.dev-endpoints.enabled`) until matching lands in Phase 6. The caller must be
-  one of the two participants.
-- **`PUT /api/interests/mine` records a selection.** `pre-plan.md` settles the behaviour but
-  names no endpoint; the returning-visitor tiles need the selection stored somewhere.
-- **Name collisions past five random attempts fall back to `Adjective Noun N`** (e.g.
-  `Quiet Otter 2`), matching the "adding a number when one is taken" line in `pre-plan.md` §7.
-- **The WebSocket lives at `/ws/chat` and accepts only `send` frames so far.** `read`,
-  `typing` and `find` join the sealed `ClientFrame` interface in Phases 5 and 6.
-- **The bench harness shares no code with `api/`.** It speaks only the public HTTP and
-  WebSocket protocol, so a bug in a shared serialisation or ordering helper cannot cancel itself
-  out across both sides.
-- **`--messages` must be even**, since it is split between the two participants.
-- **The server sends a `hello` frame on connect** carrying `userId` and `nodeId`. `nodeId` is
-  diagnostic only — nothing addresses a node — but without it neither an operator nor the harness
-  could tell a genuinely multi-node run from a single-node one.
-- **Backplane subscription registration is serialised behind a lock**, and the subscription
-  connection is warmed up at startup with a listener on an unused channel. Two sockets opening in
-  the same millisecond otherwise raced Spring's lazy subscription setup, and the second user was
-  silently never subscribed.
-- **nginx listens on 8081, not 8080**, so the replica stack and a host-run `spring-boot:run`
-  can be up at the same time without clashing.
-- **`/api/health` is liveness and `/api/health/ready` is readiness.** Phase 0 had a single
-  endpoint delegating to the full Actuator aggregate; under chaos-run load the container probe
-  timed out on dependency checks and declared a healthy node dead. Liveness now performs no I/O.
-  Readiness checks Postgres and Redis but deliberately **not** Kafka: a broker blip must not mark
-  every replica unready and take the service down, since history, auth and existing sockets keep
-  working and a failed produce is already reported as `produce_failed`.
-- **Listener concurrency is 4 per replica in the three-replica stack** (12 partitions ÷ 3), not
-  the single-node default of 12. Leaving it at 12 gives the group 36 members for 12 partitions —
-  24 idle, and every rebalance after a kill has to shuffle all 36.
-- **Chaos mode paces its sends over 40 s by default** (`--send-seconds`). Firing everything as
-  fast as possible finishes in about two seconds, so a kill scheduled for later lands after the
-  last send and tests nothing.
-- **The harness treats a message as sent only when the server acks it**, and retransmits unacked
-  ones with the same `clientMsgId`. Counting a successful socket write as a send would report
-  loss that is really the client's failure to retry.
-- **`friend_requests.status` gained a `declined` value** (migration `V5`). `plan.md` §2.2 allowed
-  only `pending`/`accepted`/`expired`, which conflates two different answers — nobody replied, and
-  someone said no — and the purge rule needs to tell them apart.
+**Infrastructure and running it**
+
+- **Postgres publishes on host port `55432`, not `5432`.** The development machine runs a native
+  Postgres bound to `0.0.0.0:5432`, which prevents Docker binding loopback `5432` at all. The
+  container-side port is unchanged and `POSTGRES_PORT` overrides it.
+- **The reviewer's command names both compose files.** `plan.md` §9 says `docker compose --profile
+  full up`, but §4 requires `compose.yaml` to contain infrastructure only; both cannot hold
+  verbatim. R7 is satisfied by a single, longer command.
+- **nginx listens on 8081**, so the replica stack and a host-run `spring-boot:run` can be up
+  together.
+- **Replica containers have an explicit 1 GB memory limit and the JVM takes 60% of it.**
+  `MaxRAMPercentage` is a share of the *container's* limit — with none set that is the whole host,
+  so three replicas each sized themselves for the entire machine, the box went into swap, and the
+  broker began stalling its reactor for hundreds of milliseconds. The symptom looked exactly like
+  message loss.
+- **Listener concurrency is 4 per replica** (12 partitions ÷ 3), not the single-node default of 12.
+  Otherwise the group has 36 members for 12 partitions and every rebalance shuffles all 36.
+- **Elasticsearch and MinIO are in the `search`/`media` profiles, not `core`**, so a correctness run
+  does not pay for them.
+
+**Protocol and API**
+
+- **`/api/health` is liveness; `/api/health/ready` is readiness.** A single endpoint delegating to
+  the full Actuator aggregate timed out under load and declared a healthy node dead. Liveness now
+  does no I/O; readiness checks Postgres and Redis but deliberately not Kafka or Elasticsearch — a
+  broker or search blip must not take every replica out of rotation.
+- **The server sends a `hello` frame on connect** carrying `nodeId`. Diagnostic only, but without it
+  neither an operator nor the harness could tell a multi-node run from a single-node one.
+- **`GET /api/media/**` returns a 302 to a presigned URL** and authorises on conversation membership
+  rather than on possession of the key.
+- **`PUT /api/interests/mine` records a selection.** `pre-plan.md` settles the behaviour but names
+  no endpoint.
+- **Conversations were created by a flag-guarded dev endpoint** before matching existed; it remains,
+  off by default, because the harness needs it.
+
+**Data model**
+
+- **`friend_requests.status` gained a `declined` value** (`V5`). `plan.md` §2.2 allowed only
+  `pending`/`accepted`/`expired`, which conflates "nobody replied" with "someone said no", and the
+  purge rule needs to tell them apart.
 - **A declined request means the conversation is not kept** and goes back on the purge clock.
-  `pre-plan.md` says an accepted request keeps it and no request deletes it, but does not say
-  which a decline is; not keeping it is the reading consistent with "strangers stay strangers".
-- **Elasticsearch is in the `search` and `full` compose profiles, not `core`.** It is the
-  heaviest thing in the stack serving the least critical requirement, and the correctness harness
-  does not need it — an ordering or chaos run should not have to pay a gigabyte for it. The
-  readiness probe excludes it for the same reason it excludes Kafka.
-- **The `waiting` index is written with `refresh=true`.** Two people arriving together must be
-  able to find each other, and Elasticsearch's default one-second refresh is an eternity inside a
-  five-second patience window. It costs write throughput on an index that holds only the people
-  currently waiting.
-- **The matching tick runs on every replica without a lock**, unlike the five retention jobs. It
-  only ticks for the users that replica is holding, and the claim is already atomic — a lock here
-  would serialise all matching through one replica to prevent a race that is already prevented.
+- **The descending index on `(conversation_id, seq)` is not created.** A btree scans backwards as
+  cheaply as forwards, so it would duplicate the unique constraint's index at the cost of a second
+  write per message.
+- **Name collisions past five random attempts fall back to `Adjective Noun N`.**
+
+**Client**
+
 - **`web/index.html` is copied into the jar at build time** and served by the API, so there is one
-  source of truth and the deployed image is self-contained. The Docker build context is therefore
-  the repository root rather than `api/`.
+  source of truth and the image is self-contained. The Docker build context is the repository root.
 - **The client generates `clientMsgId` with a `crypto.getRandomValues` fallback.**
-  `crypto.randomUUID` exists only in a secure context (https or localhost), so on any plain-HTTP
-  deployment it is undefined and every send throws. Found by the browser test, which reaches the
-  app over plain HTTP on a non-localhost host — exactly the case a laptop never exercises.
-- **`GET /api/media/**` returns a 302 to a presigned URL** rather than proxying bytes, and
-  authorises on conversation membership rather than on possession of the key.
-- **Sign-out deletes the device token rather than revoking the JWT.** The JWT stays valid until
-  it expires (24 h); revoking it would need a denylist and a lookup on every request, which is a
-  real cost for a threat this project does not have. Worth naming rather than pretending.
-- **`POST /api/auth/signup` is under the permit-all `/api/auth/**` prefix but requires a valid
-  JWT**, because it attaches to an existing account rather than creating one. The bearer filter
-  still runs on permitted paths, so an unauthenticated call gets a 401 from the controller.
-- **Replica containers have an explicit 768 MB memory limit and the JVM takes 60% of it.**
-  `MaxRAMPercentage` is a percentage of the *container's* limit, and with no limit set that is
-  the whole host — so three replicas each sized themselves for the entire machine, the box went
-  into swap, and the broker began stalling its reactor for hundreds of milliseconds. The
-  symptom looked exactly like message loss. The remaining 40% is metaspace, code cache, thread
-  stacks and direct buffers, not slack.
-- **`spring.config.import` reads the gitignored `.env`** so `./mvnw spring-boot:run` works
-  without exporting variables by hand. `.env` remains gitignored; `.env.example` stays blank.
+  `crypto.randomUUID` exists only in a secure context, so on any plain-HTTP deployment that is not
+  localhost it is undefined and every send throws.
+
+**Testing**
+
+- **Selenium in a container, not Playwright**, so the browser journey runs inside `./mvnw verify`
+  with no Node toolchain to install.
+- **TTLs are shortened in tests** (presence, typing, shuffle) so expiry is something a test observes
+  rather than assumes. The behaviour under test is that these keys expire on their own, not the
+  exact duration.
