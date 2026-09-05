@@ -20,6 +20,8 @@
 | Event log | `aim.md` §4.2 | Redpanda (Kafka protocol), self-hosted |
 | Search | `aim.md` §4.3 | Elasticsearch 8, single node |
 | Build tool | `aim.md` §4.4 | Maven |
+| Data access | `plan.md` §2.1 | Spring Data JPA + Hibernate |
+| Migrations | `plan.md` §2.1 | **Flyway**, raw SQL, forward-only |
 | Full stack | `aim.md` §5.1 | Postgres, Redis, Redpanda, ES, MinIO, Prometheus, Grafana, nginx |
 | Every product behaviour | `pre-plan.md` | Journey, features, retention, what's excluded |
 | Hosting | `deploy.md` | Laptop for dev/review; resized EC2 for benchmark; hosting optional |
@@ -102,7 +104,32 @@ Redis channel per locally-connected user. Any node can serve any user; no sticky
 
 ## 2. Data model
 
-PostgreSQL. Migrations via **Flyway** (`api/src/main/resources/db/migration/V__*.sql`).
+### 2.1 Data access and migrations — decided
+
+**Spring Data JPA (Hibernate) for access. Flyway for migrations.**
+
+Migrations are raw SQL in `api/src/main/resources/db/migration/`, named
+`V<n>__<snake_case>.sql`, applied by Flyway on startup. They are **forward-only**: an
+applied migration is never edited, only superseded by the next file. Hibernate's
+`ddl-auto` is set to `validate` — never `update` or `create`. Flyway owns the schema;
+Hibernate only checks that the entities agree with it. Two systems writing DDL to one
+database fight over ownership.
+
+**On Prisma — asked and closed, do not re-raise.** Prisma is a Node.js/TypeScript ORM.
+Its client is a Rust query engine with bindings for TypeScript (official), Python and Rust
+(community); the Go client was archived and **no Java binding exists or is planned**. It
+is not usable from a JVM application at all, so it was never a live option against the
+locked Java decision in `aim.md` §4.1.
+
+What Prisma is genuinely good at is covered:
+
+| Prisma strength | Here |
+|---|---|
+| Versioned raw-SQL migrations, never edited once applied | Flyway, same discipline |
+| A readable schema mirror | §2.2 below, plus a generated `docs/SCHEMA.md` |
+| Type-safe queries | Spring Data repositories; jOOQ was considered and rejected as niche |
+
+### 2.2 Schema
 
 ```
 users
