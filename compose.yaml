@@ -1,0 +1,31 @@
+# Infrastructure only. The application under development runs on the host
+# (`cd api && ./mvnw spring-boot:run`) so the debugger attaches and restarts are instant.
+# Containerised replicas arrive in Phase 3 as compose.replicas.yaml.
+#
+# Every port is bound to 127.0.0.1 on purpose: Docker's default form binds 0.0.0.0 and
+# writes straight into iptables' DOCKER chain, bypassing UFW (deploy.md 8).
+
+name: shush
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    profiles: ["core", "full"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shush}
+      POSTGRES_USER: ${POSTGRES_USER:-shush}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+    ports:
+      # Host port is 55432, not 5432: a native Postgres on the dev machine already
+      # holds 5432 and Docker cannot then bind loopback. Container-side stays 5432.
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shush} -d ${POSTGRES_DB:-shush}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:

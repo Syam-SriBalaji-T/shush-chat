@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: shush-api
+
+  # Locked decision (aim.md 4.1): MVC on virtual threads, not WebFlux.
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: ${SHUSH_DB_URL:jdbc:postgresql://localhost:55432/shush}
+    username: ${SHUSH_DB_USER:shush}
+    password: ${SHUSH_DB_PASSWORD:shush}
+
+  jpa:
+    # Flyway owns the schema; Hibernate only checks the entities agree with it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  docker:
+    compose:
+      file: ../compose.yaml
+      profiles:
+        active: core
+      # Leave infrastructure running between app restarts.
+      lifecycle-management: start-only
+
+server:
+  port: ${SHUSH_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: info
