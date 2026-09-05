@@ -1,13 +1,16 @@
 package site.syamdev.shush.config;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.TestUsers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,12 +21,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class VirtualThreadIT extends AbstractPostgresIT {
 
-    @Autowired
-    private TestRestTemplate rest;
-
     @Test
     void requestsAreServedOnVirtualThreads() {
-        assertThat(rest.getForObject("/test/thread-is-virtual", Boolean.class)).isTrue();
+        TestUsers.Session session = testUsers.newAnonymous();
+
+        ResponseEntity<Boolean> response = rest.exchange("/test/thread-is-virtual", HttpMethod.GET,
+                new HttpEntity<>(testUsers.authorised(session)), Boolean.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isTrue();
     }
 
     @TestConfiguration

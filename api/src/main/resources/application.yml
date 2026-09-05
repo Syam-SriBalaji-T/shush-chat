@@ -2,6 +2,11 @@ spring:
   application:
     name: shush-api
 
+  # Lets `./mvnw spring-boot:run` pick up the gitignored .env the same file docker compose
+  # reads, so secrets stay out of the repo without having to be exported by hand.
+  config:
+    import: optional:file:../.env[.properties]
+
   # Locked decision (aim.md 4.1): MVC on virtual threads, not WebFlux.
   threads:
     virtual:
@@ -45,6 +50,16 @@ management:
     health:
       probes:
         enabled: true
+
+shush:
+  jwt:
+    # No default. A deployment without this fails to start rather than signing tokens with
+    # a value anyone reading this repository already knows.
+    secret: ${SHUSH_JWT_SECRET}
+    ttl: 24h
+  dev-endpoints:
+    # Conversation creation without matching. Phase 6 removes the need for it.
+    enabled: ${SHUSH_DEV_ENDPOINTS:false}
 
 logging:
   level:
