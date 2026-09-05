@@ -1,0 +1,45 @@
+# Java / Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+hs_err_pid*
+replay_pid*
+
+# Spring
+application-local.yml
+application-local.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+out/
+bin/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Node (web client, Playwright)
+node_modules/
+playwright-report/
+test-results/
+
+# Local infra state
+data/
+volumes/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
