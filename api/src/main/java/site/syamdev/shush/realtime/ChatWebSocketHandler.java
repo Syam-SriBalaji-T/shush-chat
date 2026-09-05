@@ -15,6 +15,9 @@ import site.syamdev.shush.config.NodeIdentity;
 import site.syamdev.shush.conversation.ConversationService;
 import site.syamdev.shush.message.ChatMessageProducer;
 import site.syamdev.shush.message.Message;
+import site.syamdev.shush.presence.PresenceAnnouncer;
+import site.syamdev.shush.presence.PresenceService;
+import site.syamdev.shush.presence.TypingService;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -31,22 +34,32 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final SessionRegistry registry;
     private final BackplaneSubscriber backplane;
+    private final BackplanePublisher publisher;
     private final ConversationService conversations;
     private final ChatMessageProducer producer;
+    private final PresenceService presence;
+    private final PresenceAnnouncer announcer;
+    private final TypingService typing;
     private final NodeIdentity node;
     private final ObjectMapper json;
     private final int sendTimeLimitMillis;
     private final int bufferSizeLimitBytes;
 
     ChatWebSocketHandler(SessionRegistry registry, BackplaneSubscriber backplane,
-                         ConversationService conversations, ChatMessageProducer producer,
+                         BackplanePublisher publisher, ConversationService conversations,
+                         ChatMessageProducer producer, PresenceService presence,
+                         PresenceAnnouncer announcer, TypingService typing,
                          NodeIdentity node, ObjectMapper json,
                          @Value("${shush.websocket.send-time-limit-millis}") int sendTimeLimitMillis,
                          @Value("${shush.websocket.buffer-size-limit-bytes}") int bufferSizeLimitBytes) {
         this.registry = registry;
         this.backplane = backplane;
+        this.publisher = publisher;
         this.conversations = conversations;
         this.producer = producer;
+        this.presence = presence;
+        this.announcer = announcer;
+        this.typing = typing;
         this.node = node;
         this.json = json;
         this.sendTimeLimitMillis = sendTimeLimitMillis;
@@ -65,10 +78,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 raw, sendTimeLimitMillis, bufferSizeLimitBytes,
                 ConcurrentWebSocketSessionDecorator.OverflowStrategy.TERMINATE);
 
-        // Subscribe before announcing the socket is usable, so nothing published between the
-        // two is missed.
         if (registry.register(userId, session)) {
+            // Subscribe before announcing anything, so nothing published in between is missed.
             backplane.subscribe(userId);
+            presence.markOnline(userId);
+            announcer.announceOnline(userId);
         }
         send(session, new ServerFrame.Hello(userId, node.nodeId()));
     }
@@ -77,12 +91,15 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         UUID userId = userId(session);
         if (registry.unregister(userId, session.getId())) {
+            // Only when the last tab goes: closing one of three is not going offline.
+            presence.markOffline(userId);
+            announcer.announceOffline(userId);
             backplane.unsubscribe(userId);
         }
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage frame) throws IOException {
+    protected void handleTextMessage(WebSocketSession session, TextMessage frame) {
         UUID senderId = userId(session);
         ClientFrame parsed;
         try {
@@ -92,8 +109,15 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        switch (parsed) {
-            case ClientFrame.Send send -> handleSend(senderId, send);
+        try {
+            switch (parsed) {
+                case ClientFrame.Send send -> handleSend(senderId, send);
+                case ClientFrame.Read read -> handleRead(senderId, read);
+                case ClientFrame.Typing typingFrame -> handleTyping(senderId, typingFrame);
+                case ClientFrame.Leave leave -> handleLeave(senderId, leave);
+            }
+        } catch (ApiException e) {
+            replyTo(senderId, new ServerFrame.Error(e.getCode(), e.getMessage(), null));
         }
     }
 
@@ -114,6 +138,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             producer.produce(send.conversationId(), senderId, send.clientMsgId(),
                     kind, send.body(), send.mediaKey()).join();
 
+            // Sending a message means you have stopped typing it.
+            typing.clear(send.conversationId(), senderId);
             replyTo(senderId, ServerFrame.Ack.sent(send.clientMsgId()));
         } catch (ApiException e) {
             replyTo(senderId, new ServerFrame.Error(e.getCode(), e.getMessage(), send.clientMsgId()));
@@ -126,11 +152,50 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void handleRead(UUID senderId, ClientFrame.Read read) {
+        conversations.requireParticipant(read.conversationId(), senderId);
+        if (!conversations.markRead(read.conversationId(), senderId, read.seq())) {
+            // The cursor did not move -- a repeat or a stale read. Announcing it would make
+            // receipts fire on every scroll.
+            return;
+        }
+        publishToCounterparts(read.conversationId(), senderId,
+                new ServerFrame.ReadReceipt(read.conversationId(), senderId, read.seq()));
+    }
+
+    private void handleTyping(UUID senderId, ClientFrame.Typing frame) {
+        conversations.requireParticipant(frame.conversationId(), senderId);
+        if (!typing.accept(frame.conversationId(), senderId)) {
+            // Inside the throttle window. Dropped silently: an error frame per keystroke would
+            // cost more than the event it is refusing.
+            return;
+        }
+        publishToCounterparts(frame.conversationId(), senderId,
+                new ServerFrame.Typing(frame.conversationId(), senderId));
+    }
+
+    private void handleLeave(UUID senderId, ClientFrame.Leave leave) {
+        conversations.requireParticipant(leave.conversationId(), senderId);
+        if (!conversations.leave(leave.conversationId(), senderId)) {
+            return;
+        }
+        // "Left", not "offline": this one is final, and the other person is told so
+        // (pre-plan.md 3). The distinction is the whole reason these are separate frames.
+        publishToCounterparts(leave.conversationId(), senderId,
+                new ServerFrame.Left(leave.conversationId(), senderId));
+    }
+
+    private void publishToCounterparts(UUID conversationId, UUID senderId, ServerFrame frame) {
+        conversations.participantIds(conversationId).stream()
+                .filter(participantId -> !participantId.equals(senderId))
+                .forEach(participantId -> publisher.publish(participantId, frame));
+    }
+
     /**
      * Immediate replies -- {@code hello}, {@code sent}, protocol errors -- go straight to this
-     * node's sockets for the user. They are answers to a frame that arrived here, not fanout,
-     * so routing them through the backplane would add a hop and prove nothing. Anything
-     * originating in the writer takes the backplane, because the writer may be another node.
+     * node's sockets for the user. They are answers to a frame that arrived here, not fanout, so
+     * routing them through the backplane would add a hop and prove nothing. Anything originating
+     * in the writer, or destined for the other participant, takes the backplane.
      */
     private void replyTo(UUID userId, ServerFrame frame) {
         try {

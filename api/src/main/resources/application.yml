@@ -111,6 +111,21 @@ shush:
   # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown
   # to have genuinely spanned nodes.
   node-id: ${SHUSH_NODE_ID:}
+  presence:
+    # Renewed every 15s and expiring after 45s: two missed ticks before anyone is marked away,
+    # so a GC pause does not flicker someone offline, and a dead node self-corrects in under a
+    # minute without any cleanup job.
+    ttl: 45s
+    heartbeat: 15s
+  typing:
+    ttl: 5s
+    throttle: 3s
+  name:
+    # One shuffle a second. Nobody tapping a button notices; it stops a script draining the pool.
+    shuffle-interval: 1s
+  conversation:
+    # A stranger conversation nobody asked to keep does not survive its ending.
+    purge-after-ending: 1h
   websocket:
     heartbeat: 30s
     send-time-limit-millis: 10000

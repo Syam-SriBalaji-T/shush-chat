@@ -83,4 +83,19 @@ public class User {
     public void touch(Instant now) {
         this.lastSeenAt = now;
     }
+
+    /**
+     * Attaches an email to the identity that already exists. Nothing is created, copied or
+     * migrated -- the row keeps its id, its name, its friends and its conversations, which is
+     * exactly why signing up resets nothing (pre-plan.md 8.1).
+     */
+    public void attachAccount(String email, String passwordHash) {
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.anonymous = false;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
 }

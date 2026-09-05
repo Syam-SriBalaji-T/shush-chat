@@ -12,7 +12,11 @@ import java.util.UUID;
         @JsonSubTypes.Type(value = ServerFrame.Ack.class, name = "ack"),
         @JsonSubTypes.Type(value = ServerFrame.MessageFrame.class, name = "message"),
         @JsonSubTypes.Type(value = ServerFrame.Error.class, name = "error"),
-        @JsonSubTypes.Type(value = ServerFrame.Hello.class, name = "hello")
+        @JsonSubTypes.Type(value = ServerFrame.Hello.class, name = "hello"),
+        @JsonSubTypes.Type(value = ServerFrame.Presence.class, name = "presence"),
+        @JsonSubTypes.Type(value = ServerFrame.Typing.class, name = "typing"),
+        @JsonSubTypes.Type(value = ServerFrame.ReadReceipt.class, name = "read"),
+        @JsonSubTypes.Type(value = ServerFrame.Left.class, name = "left")
 })
 public sealed interface ServerFrame {
 
@@ -58,4 +62,23 @@ public sealed interface ServerFrame {
      * nothing on one.
      */
     record Hello(UUID userId, String nodeId) implements ServerFrame {}
+
+    /**
+     * Someone's connection came or went. Distinct from {@link Left}: going offline is not
+     * leaving, the conversation stays open, and anything sent meanwhile is waiting when they
+     * return (pre-plan.md 3).
+     *
+     * @param lastSeenAt only meaningful when {@code online} is false
+     */
+    record Presence(UUID conversationId, UUID userId, boolean online, Instant lastSeenAt)
+            implements ServerFrame {
+    }
+
+    record Typing(UUID conversationId, UUID userId) implements ServerFrame {}
+
+    /** @param seq the highest sequence number that user has read */
+    record ReadReceipt(UUID conversationId, UUID userId, long seq) implements ServerFrame {}
+
+    /** Deliberately gone. The conversation is over; this is not a reconnect. */
+    record Left(UUID conversationId, UUID userId) implements ServerFrame {}
 }

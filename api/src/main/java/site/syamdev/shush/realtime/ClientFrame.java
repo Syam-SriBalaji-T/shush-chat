@@ -7,21 +7,41 @@ import java.util.UUID;
 
 /**
  * Everything a client may send. Sealed so the handler's switch is exhaustive at compile time --
- * adding a frame type in a later phase will not silently fall through to "unknown".
+ * adding a frame type in a later phase cannot silently fall through to "unknown".
  *
  * <p>JSON is camelCase (see CLAUDE.md); Postgres stays snake_case. Mapping happens at the edge.
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
-        @JsonSubTypes.Type(value = ClientFrame.Send.class, name = "send")
+        @JsonSubTypes.Type(value = ClientFrame.Send.class, name = "send"),
+        @JsonSubTypes.Type(value = ClientFrame.Read.class, name = "read"),
+        @JsonSubTypes.Type(value = ClientFrame.Typing.class, name = "typing"),
+        @JsonSubTypes.Type(value = ClientFrame.Leave.class, name = "leave")
 })
 public sealed interface ClientFrame {
 
     /**
-     * @param clientMsgId the idempotency key, stable across the client's retries of one
-     *                    logical send. The server never generates it.
+     * @param clientMsgId the idempotency key, stable across the client's retries of one logical
+     *                    send. The server never generates it.
      */
     record Send(UUID conversationId, UUID clientMsgId, String kind, String body, String mediaKey)
             implements ClientFrame {
     }
+
+    /** @param seq the highest sequence number the sender has now read */
+    record Read(UUID conversationId, long seq) implements ClientFrame {}
+
+    /**
+     * Fires on keystrokes, so it is the highest-frequency frame in the protocol by a wide
+     * margin. The client throttles to one per three seconds and the server enforces the same
+     * bound rather than trusting it -- a naive implementation writes to the datastore on every
+     * keypress and falls over.
+     */
+    record Typing(UUID conversationId) implements ClientFrame {}
+
+    /**
+     * Leaving for good, as distinct from losing connection. pre-plan.md 3 makes the two visibly
+     * different to the other person, so they must be different frames.
+     */
+    record Leave(UUID conversationId) implements ClientFrame {}
 }

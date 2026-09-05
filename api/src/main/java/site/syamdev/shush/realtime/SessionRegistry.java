@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -71,6 +72,10 @@ public class SessionRegistry {
 
     public Collection<WebSocketSession> sessionsOf(UUID userId) {
         return sessionsByUser.getOrDefault(userId, Map.of()).values();
+    }
+
+    public Set<UUID> connectedUserIds() {
+        return Set.copyOf(sessionsByUser.keySet());
     }
 
     public List<WebSocketSession> allSessions() {

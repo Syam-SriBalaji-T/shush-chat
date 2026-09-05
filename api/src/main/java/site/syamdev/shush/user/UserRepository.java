@@ -15,6 +15,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByDisplayName(String displayName);
 
+    Optional<User> findByEmailIgnoreCase(String email);
+
+    boolean existsByEmailIgnoreCase(String email);
+
     /**
      * Claims a display name if it is still free.
      *
@@ -35,4 +39,16 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     int insertIfNameFree(@Param("id") UUID id,
                          @Param("displayName") String displayName,
                          @Param("now") Instant now);
+
+    /**
+     * Renames only if the name is free. Same reasoning as the insert: the unique index decides,
+     * and a raised violation would abort the transaction rather than let the caller try again.
+     */
+    @Modifying
+    @Query(value = """
+            update users set display_name = :displayName
+            where id = :id
+              and not exists (select 1 from users taken where taken.display_name = :displayName)
+            """, nativeQuery = true)
+    int claimDisplayName(@Param("id") UUID id, @Param("displayName") String displayName);
 }

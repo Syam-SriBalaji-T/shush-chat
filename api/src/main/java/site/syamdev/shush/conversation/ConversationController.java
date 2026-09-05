@@ -30,6 +30,25 @@ class ConversationController {
     }
 
     /**
+     * Unread counts come from the maintained counter, never from a {@code COUNT(*)} at read
+     * time -- that is the query that collapses first as a conversation grows (plan.md 3.5).
+     */
+    @GetMapping("/{conversationId}")
+    ConversationView conversation(@PathVariable UUID conversationId) {
+        ConversationService.View view = conversations.view(conversationId, currentUser.requireId());
+        return new ConversationView(
+                view.conversation().getId(),
+                view.conversation().getKind().wireValue(),
+                view.conversation().getState().wireValue(),
+                view.me().getUnreadCount(),
+                view.me().getReadCursorSeq(),
+                view.others().stream()
+                        .map(other -> new ParticipantView(other.getUserId(), other.getReadCursorSeq(),
+                                other.getLeftAt() != null))
+                        .toList());
+    }
+
+    /**
      * Cursor-based history. {@code before} is a {@code seq}, not an offset, so a page stays
      * stable while messages keep arriving.
      */
@@ -68,4 +87,10 @@ class ConversationController {
     }
 
     record HistoryResponse(List<MessageView> messages, Long nextBefore, Long nextAfter) {}
+
+    record ParticipantView(UUID userId, long readCursorSeq, boolean hasLeft) {}
+
+    record ConversationView(UUID id, String kind, String state, int unreadCount,
+                            long readCursorSeq, List<ParticipantView> others) {
+    }
 }

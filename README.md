@@ -87,11 +87,12 @@ instance, which is what makes a number credible.
 
 ## Status
 
-Phase 4 of 8 — the guarantee holds across three replicas behind a load balancer, with no
-sticky sessions, **while a replica is killed mid-conversation**. See `docs/plan.md` §5.
+Phase 5 of 8 — the guarantee holds across three replicas behind a load balancer, with no
+sticky sessions, while a replica is killed mid-conversation. Presence, typing, read receipts,
+unread counts and account signup are in. See `docs/plan.md` §5.
 
-The resume claim is now proven end to end. What remains is product surface — presence,
-matching, media, the test client — and the benchmark on real hardware.
+What remains is matching, friends and media (Phases 6–7), the single-file test client, and the
+benchmark on real hardware.
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
@@ -100,7 +101,7 @@ matching, media, the test client — and the benchmark on real hardware.
 | 2 | The ordering guarantee + harness v1 | ✅ passing |
 | 3 | Horizontal scale + harness v2 | ✅ passing |
 | 4 | Chaos and correctness | ✅ passing |
-| 5 | Presence, typing, receipts, unread, signup | — |
+| 5 | Presence, typing, receipts, unread, signup | ✅ passing |
 | 6 | Matching, friends, invites, blocks | — |
 | 7 | Media and the test client | — |
 | 8 | Benchmark, README, demo | — |
@@ -264,11 +265,42 @@ ack, retransmits it with the same `clientMsgId`.
 reconnect immediately instead of waiting for a TCP timeout. That is a deploy nicety, not a
 correctness mechanism, which is exactly why the harness kills rather than stops.
 
+**Presence.** `presence:{userId}` in Redis, renewed every 15 s and expiring after 45 s. The TTL
+*is* the design: presence asserted by a key that has to be renewed cannot outlive the process
+renewing it, so a node dying is self-correcting and no cleanup job exists. Two missed renewals
+before anyone is marked away, so a GC pause does not flicker someone offline. A friends list
+resolves in one `MGET` rather than one call per friend.
+
+**Offline is not leaving.** Losing connection publishes a `presence` frame and the conversation
+stays open, because they might come back and anything sent meanwhile is waiting when they do.
+Deliberately leaving publishes a `left` frame, ends the conversation, and schedules it for purge.
+pre-plan.md §3 makes the two visibly different to the other person, so they are different frames.
+
+**Typing indicators, throttled server-side.** `typing:{convId}:{userId}` with a 5 s TTL, gated by
+a separate 3 s `SET NX` throttle key. Typing fires on keystrokes and is by far the
+highest-frequency thing in the protocol — the client is asked to send at most one every three
+seconds and the server enforces the same bound rather than trusting it, because a client with a
+bug should not be able to melt the datastore. Sending a message clears the indicator.
+
+**Unread counts and read receipts.** The counter is maintained by the writer, never a
+`COUNT(*)` at read time — that is the query that collapses first as a conversation grows. The read
+cursor only ever moves forward, so a second device reading more slowly cannot drag it backwards
+and resurrect read messages; a read that does not move the cursor fires no receipt, so receipts
+do not go off on every scroll.
+
+**Saving an account.** `POST /api/auth/signup` attaches an email and password to the row the
+caller already has. Nothing is created, copied or migrated — same id, same name, same
+conversations — which is the whole mechanism behind "everything transfers, nothing resets". Login
+hashes even when the email is unknown, so a missing account and a wrong password take the same
+time. A chosen name is refused while anonymous, and refused if it is shaped like a generated one,
+so nobody can mint a name indistinguishable from an assigned one.
+
 ### Not yet true
 
-Presence, typing indicators, read receipts, unread counts, signup, matching, friends and media
-are all still to come (Phases 5–7), and there is no UI beyond the harness. The benchmark numbers
-above are laptop numbers, not the Phase 8 measurement.
+Matching, friend requests, friendships, blocks, invite links, the scheduled purge jobs and media
+upload are still to come (Phases 6–7), and there is no UI beyond the harness. Conversations are
+created by the flag-guarded dev endpoint rather than by matching. The benchmark numbers above are
+laptop numbers, not the Phase 8 measurement.
 
 ## Design decisions
 
@@ -393,9 +425,14 @@ nothing is written or delivered until the rebalance completes. Lowering it furth
 against evicting healthy consumers during a GC pause.
 
 **The unread counter is maintained, not derived.** It is incremented by the writer rather than
-counted at read time, which is the entire point, but it can drift if a transaction is rolled
-back after the increment. `plan.md` §3.10 specifies a nightly reconciliation job; it is not
-implemented yet (Phase 6).
+counted at read time, which is the entire point, but it can drift: marking a conversation read
+sets the counter to zero even when the cursor was moved to a point in the middle, so messages
+after that point stop being counted. That is the tradeoff `plan.md` §3.5 chose, and it is why a
+nightly reconciliation job is specified — that job is Phase 6 and is not implemented yet.
+
+**Presence is per user, not per device.** Closing one of three tabs does not mark you offline,
+which is correct, but presence also cannot tell anyone *which* device you are on, and a user
+whose last node dies stays "online" for up to the remaining TTL.
 
 **A partition stalls rather than dropping a record it cannot write.** Spring Kafka's default
 error handler retries ten times and then skips the record — silent message loss under database
@@ -485,6 +522,12 @@ for later review; each is the smallest reasonable choice, not a considered prefe
 - **The harness treats a message as sent only when the server acks it**, and retransmits unacked
   ones with the same `clientMsgId`. Counting a successful socket write as a send would report
   loss that is really the client's failure to retry.
+- **Sign-out deletes the device token rather than revoking the JWT.** The JWT stays valid until
+  it expires (24 h); revoking it would need a denylist and a lookup on every request, which is a
+  real cost for a threat this project does not have. Worth naming rather than pretending.
+- **`POST /api/auth/signup` is under the permit-all `/api/auth/**` prefix but requires a valid
+  JWT**, because it attaches to an existing account rather than creating one. The bearer filter
+  still runs on permitted paths, so an unauthenticated call gets a 401 from the controller.
 - **Replica containers have an explicit 768 MB memory limit and the JVM takes 60% of it.**
   `MaxRAMPercentage` is a percentage of the *container's* limit, and with no limit set that is
   the whole host — so three replicas each sized themselves for the entire machine, the box went

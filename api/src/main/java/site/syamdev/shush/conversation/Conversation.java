@@ -64,6 +64,20 @@ public class Conversation {
         return createdAt;
     }
 
+    public Instant getEndedAt() {
+        return endedAt;
+    }
+
+    public Instant getPurgeAfter() {
+        return purgeAfter;
+    }
+
+    void end(Instant endedAt, Instant purgeAfter) {
+        this.state = State.ENDED.wireValue();
+        this.endedAt = endedAt;
+        this.purgeAfter = purgeAfter;
+    }
+
     public enum Kind {
         STRANGER, FRIEND;
 
