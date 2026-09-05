@@ -16,3 +16,13 @@ shush:
   typing:
     ttl: 1s
     throttle: 1s
+  # Scheduled sweeps are driven explicitly in tests. Leaving them on a timer would make results
+  # depend on whether a tick happened to fire mid-assertion.
+  scheduler:
+    purge-conversations: 1h
+    expire-friend-requests: 1h
+    purge-media: 1h
+    purge-anonymous-users: 24h
+    reconcile-unread: 24h
+  matching:
+    tick: 200ms

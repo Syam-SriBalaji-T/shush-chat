@@ -69,6 +69,30 @@ services:
       timeout: 5s
       retries: 20
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.7
+    # Not in the "core" profile deliberately. It is the heaviest thing in the stack serving the
+    # least critical requirement (aim.md 4.3), and the correctness harness does not need it --
+    # so an ordering or chaos run should not have to pay a gigabyte for it.
+    profiles: ["search", "full"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      # Held down hard: this is a single-node index over a few hundred tag documents, not a
+      # cluster. The default heap would be several times the rest of the stack combined.
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
 volumes:
   postgres-data:
   redpanda-data:
+  elasticsearch-data:

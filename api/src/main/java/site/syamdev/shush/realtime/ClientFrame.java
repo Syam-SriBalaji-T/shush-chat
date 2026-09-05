@@ -16,7 +16,9 @@ import java.util.UUID;
         @JsonSubTypes.Type(value = ClientFrame.Send.class, name = "send"),
         @JsonSubTypes.Type(value = ClientFrame.Read.class, name = "read"),
         @JsonSubTypes.Type(value = ClientFrame.Typing.class, name = "typing"),
-        @JsonSubTypes.Type(value = ClientFrame.Leave.class, name = "leave")
+        @JsonSubTypes.Type(value = ClientFrame.Leave.class, name = "leave"),
+        @JsonSubTypes.Type(value = ClientFrame.Find.class, name = "find"),
+        @JsonSubTypes.Type(value = ClientFrame.CancelFind.class, name = "cancelFind")
 })
 public sealed interface ClientFrame {
 
@@ -44,4 +46,12 @@ public sealed interface ClientFrame {
      * different to the other person, so they must be different frames.
      */
     record Leave(UUID conversationId) implements ClientFrame {}
+
+    /**
+     * @param patience 5 or 10 seconds of trying for a shared interest before settling for
+     *                 anyone, or 0 to hold out indefinitely for a real overlap
+     */
+    record Find(java.util.List<Short> interestIds, int patience) implements ClientFrame {}
+
+    record CancelFind() implements ClientFrame {}
 }

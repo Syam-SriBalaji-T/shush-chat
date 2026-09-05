@@ -87,12 +87,12 @@ instance, which is what makes a number credible.
 
 ## Status
 
-Phase 5 of 8 — the guarantee holds across three replicas behind a load balancer, with no
-sticky sessions, while a replica is killed mid-conversation. Presence, typing, read receipts,
-unread counts and account signup are in. See `docs/plan.md` §5.
+Phase 6 of 8 — the guarantee holds across three replicas behind a load balancer, with no
+sticky sessions, while a replica is killed mid-conversation. Interest matching, friends,
+invites, blocks and the retention jobs are in. See `docs/plan.md` §5.
 
-What remains is matching, friends and media (Phases 6–7), the single-file test client, and the
-benchmark on real hardware.
+What remains is media upload, the single-file test client (Phase 7), and the benchmark on real
+hardware (Phase 8).
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
@@ -102,7 +102,7 @@ benchmark on real hardware.
 | 3 | Horizontal scale + harness v2 | ✅ passing |
 | 4 | Chaos and correctness | ✅ passing |
 | 5 | Presence, typing, receipts, unread, signup | ✅ passing |
-| 6 | Matching, friends, invites, blocks | — |
+| 6 | Matching, friends, invites, blocks | ✅ passing |
 | 7 | Media and the test client | — |
 | 8 | Benchmark, README, demo | — |
 
@@ -295,12 +295,46 @@ hashes even when the email is unknown, so a missing account and a wrong password
 time. A chosen name is refused while anonymous, and refused if it is shaped like a generated one,
 so nobody can mint a name indistinguishable from an assigned one.
 
+**Matching.** A waiting user goes into a Redis sorted set and an Elasticsearch `waiting` index,
+and the best-overlapping candidate is claimed by a Lua script that removes *both* ids only if
+*both* are still present. That atomicity is the whole mechanism: two matchers can and do find the
+same third person at the same instant, losing is normal and cheap — the loser stays in the pool
+and retries on the next tick — but both winning would put one person in two conversations at once.
+`ConcurrentClaimIT` asserts exactly one winner, a hundred times.
+
+**The patience dial is honest.** Five or ten seconds means "try for a shared interest, then give
+me anyone"; zero means "only somebody who actually shares one, however long that takes". A random
+match is stored as `matched_on = null` and the `matched` frame says `randomMatch: true`, because
+presenting a random match as an interest match is a small lie the user notices the moment they
+start talking.
+
+**Why Elasticsearch and not embeddings.** Matching is term overlap over a controlled vocabulary
+— a lexical retrieval problem, which is what an inverted index is for, and it does the ranking,
+the exclusions (blocked either way, already friends, yourself) and the tie-break on waiting time
+in one query. Both sides draw from the same fixed tag list, so there is no semantic gap for
+vectors to close, and approximate nearest-neighbour search would put an embedding model in the
+request path to approximate a set intersection that can be computed exactly. That flips the
+moment the input stops being a controlled vocabulary — free-text bios, cross-language matching,
+"find users like this user" derived from behaviour — and that is where pgvector becomes the right
+answer instead.
+
+**Keeping someone.** A friend request works during the conversation *and* after it has ended,
+which is the point: it is the one thing that still works once someone has left, so a good chat is
+not lost because the other person closed their laptop first. Accepting keeps the conversation
+forever; declining says nothing at all and cannot be re-asked, because the row stays and the
+unique constraint refuses a second one. A conversation nobody asked to keep is deleted, along
+with everything said in it.
+
+**Five scheduled sweeps, each on one replica.** Every node runs the same timers, so a Redis lock
+with a TTL decides which one actually runs. A contending tick is *skipped*, never queued: these
+are periodic sweeps, so a missed run is corrected by the next one, whereas a queue of them piles
+up faster than it drains the moment one run is slow. The lock is released only by its holder, so
+a node that overran its lease cannot delete a lock another node is relying on.
+
 ### Not yet true
 
-Matching, friend requests, friendships, blocks, invite links, the scheduled purge jobs and media
-upload are still to come (Phases 6–7), and there is no UI beyond the harness. Conversations are
-created by the flag-guarded dev endpoint rather than by matching. The benchmark numbers above are
-laptop numbers, not the Phase 8 measurement.
+Media upload is still to come, and there is no UI beyond the harness (Phase 7). The benchmark
+numbers above are laptop numbers, not the Phase 8 measurement.
 
 ## Design decisions
 
@@ -364,6 +398,23 @@ so cross-node delivery would break silently and only surface under a load balanc
 means a bug is a bug everywhere. It also makes Redis a hard dependency for delivery, though not
 for durability — messages already committed are never lost by a Redis failure, only undelivered
 until the client refetches history.
+
+### One row per friendship, and the ordering bug that hid in it
+
+`friendships` stores each pair once, with the ids in a fixed order so the primary key can enforce
+that — storing both directions would make "are these two friends?" a question with two answers
+that eventually disagree. A check constraint asserts the order.
+
+The first implementation ordered the pair with `UUID.compareTo`, and roughly half of all friend
+requests failed with a constraint violation, at random. **Java compares a UUID's two halves as
+signed longs; Postgres compares the sixteen bytes unsigned.** For any pair differing in the top
+bit the two disagree, so a pair ordered in Java and then checked by the database is rejected —
+non-deterministically, because the ids are random. The database owns the constraint, so the
+ordering has to match the database. `FriendshipTest` pins it with a pair chosen to differ in
+exactly that bit.
+
+It is worth naming because it is the shape of bug that survives review: the code reads correctly,
+the test that would catch it passes half the time, and the failure looks like flakiness.
 
 ### Per-user ordered delivery — a bug the harness caught
 
@@ -446,6 +497,20 @@ That is correct for a chat service — reconnect and re-sync is cheap — but it
 network can produce a reconnect loop, and there is no exponential backoff on the server side to
 discourage it.
 
+**Matching ranking is BM25 over tag terms, not a tuned relevance model.** More shared tags
+scores higher and ties break on who has waited longest, which is defensible and simple. It does
+not weight rare interests above common ones, so matching two people on "music" counts the same
+as matching them on "volunteering" — a real scoring function would not treat those equally.
+
+**A blocked user is excluded from matching but not from an existing conversation.** Blocking
+removes the friendship and stops future matches, but the two are not forcibly removed from a
+conversation they are already in; the blocker has to leave it.
+
+**Reports are recorded, not acted on.** There is no moderation queue and nothing reads the table.
+That is honest for a project running with test users, and it is exactly the piece of work that
+would have to exist *before* opening anonymous image-sharing to real strangers — a separate
+undertaking, not a feature toggle.
+
 **No authentication on the Redis or Kafka connections.** Both are reachable only on the compose
 network and bound to loopback on the host. That is appropriate for a local stack and would not
 be for a deployment.
@@ -522,6 +587,23 @@ for later review; each is the smallest reasonable choice, not a considered prefe
 - **The harness treats a message as sent only when the server acks it**, and retransmits unacked
   ones with the same `clientMsgId`. Counting a successful socket write as a send would report
   loss that is really the client's failure to retry.
+- **`friend_requests.status` gained a `declined` value** (migration `V5`). `plan.md` §2.2 allowed
+  only `pending`/`accepted`/`expired`, which conflates two different answers — nobody replied, and
+  someone said no — and the purge rule needs to tell them apart.
+- **A declined request means the conversation is not kept** and goes back on the purge clock.
+  `pre-plan.md` says an accepted request keeps it and no request deletes it, but does not say
+  which a decline is; not keeping it is the reading consistent with "strangers stay strangers".
+- **Elasticsearch is in the `search` and `full` compose profiles, not `core`.** It is the
+  heaviest thing in the stack serving the least critical requirement, and the correctness harness
+  does not need it — an ordering or chaos run should not have to pay a gigabyte for it. The
+  readiness probe excludes it for the same reason it excludes Kafka.
+- **The `waiting` index is written with `refresh=true`.** Two people arriving together must be
+  able to find each other, and Elasticsearch's default one-second refresh is an eternity inside a
+  five-second patience window. It costs write throughput on an index that holds only the people
+  currently waiting.
+- **The matching tick runs on every replica without a lock**, unlike the five retention jobs. It
+  only ticks for the users that replica is holding, and the claim is already atomic — a lock here
+  would serialise all matching through one replica to prevent a race that is already prevented.
 - **Sign-out deletes the device token rather than revoking the JWT.** The JWT stays valid until
   it expires (24 h); revoking it would need a denylist and a lookup on every request, which is a
   real cost for a threat this project does not have. Worth naming rather than pretending.

@@ -27,6 +27,7 @@ services:
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # Replicas run infrastructure they did not start; they must never try to manage it.
@@ -65,6 +66,7 @@ services:
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
@@ -83,6 +85,7 @@ services:
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the

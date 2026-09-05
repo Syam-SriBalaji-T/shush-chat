@@ -8,6 +8,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.redpanda.RedpandaContainer;
 
 /**
@@ -36,10 +37,17 @@ public abstract class AbstractIT {
     public static final RedpandaContainer REDPANDA =
             new RedpandaContainer("docker.redpanda.com/redpandadata/redpanda:v25.3.17");
 
+    @ServiceConnection
+    public static final ElasticsearchContainer ELASTICSEARCH =
+            new ElasticsearchContainer("docker.elastic.co/elasticsearch/elasticsearch:8.19.7")
+                    .withEnv("xpack.security.enabled", "false")
+                    .withEnv("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
+
     static {
         POSTGRES.start();
         REDIS.start();
         REDPANDA.start();
+        ELASTICSEARCH.start();
     }
 
     @Autowired

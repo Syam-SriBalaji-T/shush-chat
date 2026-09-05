@@ -14,6 +14,7 @@ import site.syamdev.shush.common.ApiException;
 import site.syamdev.shush.config.NodeIdentity;
 import site.syamdev.shush.conversation.ConversationService;
 import site.syamdev.shush.message.ChatMessageProducer;
+import site.syamdev.shush.matching.MatchingService;
 import site.syamdev.shush.message.Message;
 import site.syamdev.shush.presence.PresenceAnnouncer;
 import site.syamdev.shush.presence.PresenceService;
@@ -40,6 +41,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final PresenceService presence;
     private final PresenceAnnouncer announcer;
     private final TypingService typing;
+    private final MatchingService matching;
     private final NodeIdentity node;
     private final ObjectMapper json;
     private final int sendTimeLimitMillis;
@@ -49,7 +51,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                          BackplanePublisher publisher, ConversationService conversations,
                          ChatMessageProducer producer, PresenceService presence,
                          PresenceAnnouncer announcer, TypingService typing,
-                         NodeIdentity node, ObjectMapper json,
+                         MatchingService matching, NodeIdentity node, ObjectMapper json,
                          @Value("${shush.websocket.send-time-limit-millis}") int sendTimeLimitMillis,
                          @Value("${shush.websocket.buffer-size-limit-bytes}") int bufferSizeLimitBytes) {
         this.registry = registry;
@@ -60,6 +62,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.presence = presence;
         this.announcer = announcer;
         this.typing = typing;
+        this.matching = matching;
         this.node = node;
         this.json = json;
         this.sendTimeLimitMillis = sendTimeLimitMillis;
@@ -92,6 +95,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         UUID userId = userId(session);
         if (registry.unregister(userId, session.getId())) {
             // Only when the last tab goes: closing one of three is not going offline.
+            // Leaving the pool matters too -- matching someone who has closed the tab would
+            // burn a waiting stranger on a conversation nobody is there to have.
+            matching.cancel(userId);
             presence.markOffline(userId);
             announcer.announceOffline(userId);
             backplane.unsubscribe(userId);
@@ -115,6 +121,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 case ClientFrame.Read read -> handleRead(senderId, read);
                 case ClientFrame.Typing typingFrame -> handleTyping(senderId, typingFrame);
                 case ClientFrame.Leave leave -> handleLeave(senderId, leave);
+                case ClientFrame.Find find -> matching.find(senderId, find.interestIds(), find.patience());
+                case ClientFrame.CancelFind ignored -> matching.cancel(senderId);
             }
         } catch (ApiException e) {
             replyTo(senderId, new ServerFrame.Error(e.getCode(), e.getMessage(), null));

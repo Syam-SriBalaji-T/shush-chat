@@ -51,6 +51,10 @@ class CrossNodeFanoutIT extends AbstractIT {
                 "--spring.data.redis.host=" + REDIS.getHost(),
                 "--spring.data.redis.port=" + REDIS.getMappedPort(6379),
                 "--spring.kafka.bootstrap-servers=" + REDPANDA.getBootstrapServers(),
+                // Easy to forget, and the failure is silent: without this the second node
+                // talks to whatever is on the default port -- very possibly the developer's
+                // own dev stack -- and the two nodes simply never see each other's users.
+                "--spring.elasticsearch.uris=http://" + ELASTICSEARCH.getHttpHostAddress(),
                 "--spring.docker.compose.enabled=false",
                 // The same signing key, because a JWT issued by one node must be accepted by the
                 // other. That is exactly what lets any node serve any user.
@@ -173,6 +177,43 @@ class CrossNodeFanoutIT extends AbstractIT {
             assertThat(asAlice).isSorted();
             assertThat(asAlice).containsExactlyElementsOf(
                     IntStream.rangeClosed(1, total).mapToObj(Long::valueOf).toList());
+        }
+    }
+
+    /**
+     * Matching spans nodes for the same reason delivery does: the wait pool and the atomic
+     * claim live in Redis, not in either process, so two people looking for someone from
+     * different replicas find each other and both get told.
+     */
+    @Test
+    void twoPeopleOnDifferentNodesAreMatchedWithEachOther() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+
+        try (WsClient onFirstNode = WsClient.connect(firstNodePort, alice.jwt());
+             WsClient onSecondNode = WsClient.connect(secondNodePort, bob.jwt())) {
+
+            assertThat(onFirstNode.await("hello").path("nodeId").asText())
+                    .isNotEqualTo(onSecondNode.await("hello").path("nodeId").asText());
+
+            onFirstNode.send("{\"type\":\"find\",\"interestIds\":[1,2],\"patience\":0}");
+            onSecondNode.send("{\"type\":\"find\",\"interestIds\":[2,3],\"patience\":0}");
+
+            JsonNode asAlice = onFirstNode.await("matched");
+            JsonNode asBob = onSecondNode.await("matched");
+
+            assertThat(asAlice.path("conversationId").asText())
+                    .as("one conversation, not one each")
+                    .isEqualTo(asBob.path("conversationId").asText());
+            assertThat(asAlice.path("withUserId").asText()).isEqualTo(bob.userId().toString());
+            assertThat(asBob.path("withUserId").asText()).isEqualTo(alice.userId().toString());
+            assertThat(asAlice.path("randomMatch").asBoolean()).isFalse();
+
+            // And the conversation they were given actually works across the two nodes.
+            UUID conversationId = UUID.fromString(asAlice.path("conversationId").asText());
+            onFirstNode.sendText(conversationId, UUID.randomUUID(), "hello from the match");
+            assertThat(onSecondNode.await("message").path("body").asText())
+                    .isEqualTo("hello from the match");
         }
     }
 }

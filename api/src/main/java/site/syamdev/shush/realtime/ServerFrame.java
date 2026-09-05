@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import site.syamdev.shush.message.Message;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
@@ -16,7 +17,10 @@ import java.util.UUID;
         @JsonSubTypes.Type(value = ServerFrame.Presence.class, name = "presence"),
         @JsonSubTypes.Type(value = ServerFrame.Typing.class, name = "typing"),
         @JsonSubTypes.Type(value = ServerFrame.ReadReceipt.class, name = "read"),
-        @JsonSubTypes.Type(value = ServerFrame.Left.class, name = "left")
+        @JsonSubTypes.Type(value = ServerFrame.Left.class, name = "left"),
+        @JsonSubTypes.Type(value = ServerFrame.Matched.class, name = "matched"),
+        @JsonSubTypes.Type(value = ServerFrame.FriendRequested.class, name = "friendRequested"),
+        @JsonSubTypes.Type(value = ServerFrame.FriendRequestAccepted.class, name = "friendRequestAccepted")
 })
 public sealed interface ServerFrame {
 
@@ -81,4 +85,24 @@ public sealed interface ServerFrame {
 
     /** Deliberately gone. The conversation is over; this is not a reconnect. */
     record Left(UUID conversationId, UUID userId) implements ServerFrame {}
+
+    /**
+     * @param sharedInterestIds null when the patience window ran out
+     * @param randomMatch       stated plainly, because the conversation header says which of the
+     *                          two this was and presenting a random match as an interest match
+     *                          is a lie the user notices as soon as they start talking
+     */
+    record Matched(UUID conversationId, UUID withUserId, List<Short> sharedInterestIds,
+                   boolean randomMatch) implements ServerFrame {
+    }
+
+    record FriendRequested(UUID conversationId, UUID requestId, UUID fromUserId) implements ServerFrame {}
+
+    /**
+     * Only acceptance is announced. A decline says nothing at all -- the sender simply never
+     * hears back, which is the whole point of it being silent (pre-plan.md 6).
+     */
+    record FriendRequestAccepted(UUID conversationId, UUID requestId, UUID byUserId)
+            implements ServerFrame {
+    }
 }

@@ -42,6 +42,49 @@ public class ConversationService {
         return conversation;
     }
 
+    /**
+     * Opens the conversation a match produced.
+     *
+     * @param sharedInterestIds null for a random match, which is stored as {@code matched_on
+     *                          = null} and shown to both people as such -- the header says
+     *                          whether this was an interest match or a random one, because
+     *                          presenting one as the other is a small lie they will notice
+     */
+    @Transactional
+    public Conversation createMatched(UUID firstUserId, UUID secondUserId,
+                                      List<Short> sharedInterestIds) {
+        Conversation conversation = create(Conversation.Kind.STRANGER, firstUserId, secondUserId);
+        conversation.matchedOn(sharedInterestIds == null || sharedInterestIds.isEmpty()
+                ? null
+                : sharedInterestIds.stream().mapToInt(Short::intValue).toArray());
+        // Until somebody asks to keep it, this conversation is on the clock.
+        conversation.scheduleForPurge(clock.instant().plus(purgeAfterEnding));
+        return conversation;
+    }
+
+    /** Somebody wants this kept, so stop counting down to its deletion. */
+    @Transactional
+    public void cancelPurge(UUID conversationId) {
+        require(conversationId).scheduleForPurge(null);
+    }
+
+    @Transactional
+    public void schedulePurge(UUID conversationId) {
+        require(conversationId).scheduleForPurge(clock.instant().plus(purgeAfterEnding));
+    }
+
+    /** Accepted: the conversation and its history survive, and either of you can pick it up. */
+    @Transactional
+    public void keep(UUID conversationId) {
+        require(conversationId).keep();
+    }
+
+    @Transactional(readOnly = true)
+    public Conversation require(UUID conversationId) {
+        return conversations.findById(conversationId)
+                .orElseThrow(() -> ApiException.notFound("unknown_conversation", "no such conversation"));
+    }
+
     @Transactional(readOnly = true)
     public void requireParticipant(UUID conversationId, UUID userId) {
         if (!participants.existsByConversationIdAndUserId(conversationId, userId)) {

@@ -4,6 +4,8 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -20,6 +22,14 @@ public class Conversation {
 
     @Column(name = "state", nullable = false, columnDefinition = "text")
     private String state;
+
+    /**
+     * The interest ids this pair were matched on, or null when the patience window ran out and
+     * they were matched at random. The null is meaningful, not missing data.
+     */
+    @Column(name = "matched_on", columnDefinition = "smallint[]")
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private int[] matchedOn;
 
     @Column(name = "last_seq", nullable = false)
     private long lastSeq;
@@ -70,6 +80,28 @@ public class Conversation {
 
     public Instant getPurgeAfter() {
         return purgeAfter;
+    }
+
+    public int[] getMatchedOn() {
+        return matchedOn == null ? null : matchedOn.clone();
+    }
+
+    public boolean wasRandomMatch() {
+        return matchedOn == null;
+    }
+
+    void matchedOn(int[] interestIds) {
+        this.matchedOn = interestIds;
+    }
+
+    void scheduleForPurge(Instant purgeAfter) {
+        this.purgeAfter = purgeAfter;
+    }
+
+    void keep() {
+        this.state = State.KEPT.wireValue();
+        this.kind = Kind.FRIEND.wireValue();
+        this.purgeAfter = null;
     }
 
     void end(Instant endedAt, Instant purgeAfter) {

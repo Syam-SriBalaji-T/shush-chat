@@ -38,6 +38,14 @@ spring:
     redis:
       host: ${SHUSH_REDIS_HOST:localhost}
       port: ${SHUSH_REDIS_PORT:56379}
+    elasticsearch:
+      repositories:
+        enabled: false
+
+  elasticsearch:
+    uris: ${SHUSH_ELASTICSEARCH_URIS:http://localhost:9200}
+    connection-timeout: 2s
+    socket-timeout: 5s
 
   kafka:
     bootstrap-servers: ${SHUSH_KAFKA_BOOTSTRAP:localhost:19092}
@@ -105,6 +113,9 @@ management:
           # Kafka is deliberately absent. A broker blip must not mark every replica unready and
           # take the whole service out: history, auth and existing sockets all keep working, and
           # a failed produce is already reported to the client as produce_failed.
+          # Kafka and Elasticsearch are deliberately absent. A broker blip must not mark every
+          # replica unready and take the whole service out, and a search outage costs matching
+          # only -- chat, history and auth all keep working.
           include: readinessState, db, redis
 
 shush:
@@ -126,6 +137,25 @@ shush:
   conversation:
     # A stranger conversation nobody asked to keep does not survive its ending.
     purge-after-ending: 1h
+  social:
+    friend-request-ttl: 7d
+    invite-ttl: 7d
+  matching:
+    # Retried often enough that a five-second patience window has plenty of chances, and cheaply
+    # enough that it costs nothing: each node only ticks for the users it is holding.
+    tick: 500ms
+  retention:
+    anonymous-user: 30d
+    unconfirmed-media: 1h
+  scheduler:
+    # Longer than any sweep should take, short enough that a node dying mid-job does not hold
+    # its lock for long. Skipped ticks are fine; these are periodic sweeps, not queued work.
+    lease: 5m
+    purge-conversations: 5m
+    expire-friend-requests: 15m
+    purge-media: 1h
+    purge-anonymous-users: 24h
+    reconcile-unread: 24h
   websocket:
     heartbeat: 30s
     send-time-limit-millis: 10000
