@@ -7,7 +7,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 import site.syamdev.shush.support.TestUsers;
 import site.syamdev.shush.support.WsClient;
 
@@ -18,7 +18,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class HistoryPaginationIT extends AbstractPostgresIT {
+class HistoryPaginationIT extends AbstractIT {
 
     private static final int MESSAGE_COUNT = 25;
     private static final int PAGE_SIZE = 10;
@@ -35,8 +35,8 @@ class HistoryPaginationIT extends AbstractPostgresIT {
         try (WsClient aliceWs = WsClient.connect(port, alice.jwt())) {
             for (int i = 1; i <= MESSAGE_COUNT; i++) {
                 aliceWs.sendText(conversationId, UUID.randomUUID(), "message " + i);
-                // Wait for each ack so the sequence order under test is the send order.
-                assertThat(aliceWs.await("ack").path("seq").asLong()).isEqualTo(i);
+                // Wait for the writer's ack, so the sequence order under test is the send order.
+                assertThat(aliceWs.awaitAck("delivered").path("seq").asLong()).isEqualTo(i);
             }
         }
 

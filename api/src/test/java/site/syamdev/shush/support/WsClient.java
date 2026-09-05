@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.fail;
 
@@ -57,6 +58,17 @@ public class WsClient implements AutoCloseable {
 
     /** Waits for the next frame of this type, putting anything it passed over back afterwards. */
     public JsonNode await(String type) throws InterruptedException {
+        return await(type, frame -> true, "type=" + type);
+    }
+
+    /** Waits for the next ack carrying this status -- sends are acked twice, sent then delivered. */
+    public JsonNode awaitAck(String status) throws InterruptedException {
+        return await("ack", frame -> status.equals(frame.path("status").asText()),
+                "ack status=" + status);
+    }
+
+    public JsonNode await(String type, Predicate<JsonNode> matching, String description)
+            throws InterruptedException {
         List<JsonNode> skipped = new ArrayList<>();
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         while (System.nanoTime() < deadline) {
@@ -64,14 +76,19 @@ public class WsClient implements AutoCloseable {
             if (frame == null) {
                 continue;
             }
-            if (type.equals(frame.path("type").asText())) {
+            if (type.equals(frame.path("type").asText()) && matching.test(frame)) {
                 frames.addAll(skipped);
                 return frame;
             }
             skipped.add(frame);
         }
         frames.addAll(skipped);
-        return fail("no '%s' frame arrived within %s; saw %s", type, TIMEOUT, skipped);
+        return fail("no frame matching %s arrived within %s; saw %s", description, TIMEOUT, skipped);
+    }
+
+    /** Every frame received so far, in arrival order, without consuming them. */
+    public List<JsonNode> receivedSoFar() {
+        return List.copyOf(frames);
     }
 
     /** Collects the next {@code count} frames of this type, in arrival order. */

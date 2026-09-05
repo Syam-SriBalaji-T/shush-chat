@@ -3,7 +3,7 @@ package site.syamdev.shush.user;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import site.syamdev.shush.auth.AuthService;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class NameAllocationIT extends AbstractPostgresIT {
+class NameAllocationIT extends AbstractIT {
 
     private static final int CONCURRENT_ALLOCATIONS = 1_000;
 

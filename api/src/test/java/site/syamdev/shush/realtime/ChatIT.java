@@ -3,7 +3,7 @@ package site.syamdev.shush.realtime;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 import site.syamdev.shush.support.TestUsers;
 import site.syamdev.shush.support.WsClient;
 
@@ -12,7 +12,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class ChatIT extends AbstractPostgresIT {
+class ChatIT extends AbstractIT {
 
     @LocalServerPort
     private int port;
@@ -29,18 +29,21 @@ class ChatIT extends AbstractPostgresIT {
             UUID clientMsgId = UUID.randomUUID();
             aliceWs.sendText(conversationId, clientMsgId, "hello bob");
 
-            JsonNode ack = aliceWs.await("ack");
-            assertThat(ack.path("clientMsgId").asText()).isEqualTo(clientMsgId.toString());
-            assertThat(ack.path("status").asText()).isEqualTo("sent");
-            assertThat(ack.path("seq").asLong()).isEqualTo(1L);
-            assertThat(ack.path("duplicate").asBoolean()).isFalse();
+            // "sent" means the log accepted it. No sequence number exists yet.
+            JsonNode sent = aliceWs.awaitAck("sent");
+            assertThat(sent.path("clientMsgId").asText()).isEqualTo(clientMsgId.toString());
+            assertThat(sent.path("seq").isNull()).isTrue();
+
+            // "delivered" means the writer committed it and assigned its place in the order.
+            JsonNode delivered = aliceWs.awaitAck("delivered");
+            assertThat(delivered.path("seq").asLong()).isEqualTo(1L);
+            assertThat(delivered.path("duplicate").asBoolean()).isFalse();
 
             JsonNode received = bobWs.await("message");
             assertThat(received.path("body").asText()).isEqualTo("hello bob");
             assertThat(received.path("senderId").asText()).isEqualTo(alice.userId().toString());
             assertThat(received.path("seq").asLong()).isEqualTo(1L);
 
-            // The sender sees its own message on the same path everyone else does.
             JsonNode echoed = aliceWs.await("message");
             assertThat(echoed.path("messageId").asText()).isEqualTo(received.path("messageId").asText());
 
@@ -52,7 +55,7 @@ class ChatIT extends AbstractPostgresIT {
     }
 
     @Test
-    void aRepeatedClientMsgIdIsAcceptedOnceAndFannedOutOnce() throws Exception {
+    void aRepeatedClientMsgIdIsPersistedOnceAndDeliveredOnce() throws Exception {
         TestUsers.Session alice = testUsers.newAnonymous();
         TestUsers.Session bob = testUsers.newAnonymous();
         UUID conversationId = testUsers.createConversation(alice, bob);
@@ -62,21 +65,24 @@ class ChatIT extends AbstractPostgresIT {
 
             UUID clientMsgId = UUID.randomUUID();
             aliceWs.sendText(conversationId, clientMsgId, "only once");
-            JsonNode first = aliceWs.await("ack");
+            JsonNode first = aliceWs.awaitAck("delivered");
 
-            // The same logical send, retried by a client that never saw the first ack.
+            // The same logical send, retried by a client that never saw the first ack. Same key,
+            // so it lands on the same partition behind the original -- the retry cannot overtake it.
             aliceWs.sendText(conversationId, clientMsgId, "only once");
-            JsonNode second = aliceWs.await("ack");
+            JsonNode second = aliceWs.await("ack",
+                    frame -> frame.path("duplicate").asBoolean(), "ack with duplicate=true");
 
-            assertThat(second.path("duplicate").asBoolean()).isTrue();
             assertThat(second.path("messageId").asText()).isEqualTo(first.path("messageId").asText());
             assertThat(second.path("seq").asLong()).isEqualTo(first.path("seq").asLong());
 
-            // Bob must never be shown the retry.
+            // Bob must never be shown the retry. Sending a second, distinct message and
+            // asserting on the pair proves the duplicate did not slip in between them.
             aliceWs.sendText(conversationId, UUID.randomUUID(), "second message");
             List<JsonNode> seen = bobWs.awaitAll("message", 2);
             assertThat(seen.stream().map(f -> f.path("body").asText()))
                     .containsExactly("only once", "second message");
+            assertThat(seen.stream().map(f -> f.path("seq").asLong())).containsExactly(1L, 2L);
         }
     }
 

@@ -12,21 +12,62 @@ claim and then prove it:
 
 Everything else in the system exists to force that problem into the open.
 
+## The guarantee, stated precisely
+
+**For any conversation C, there exists one total order over the messages of C, and every
+observer sees exactly that order.** Concretely, for all messages in C:
+
+1. **Dense sequencing.** Each message carries a `seq` that is unique within C, and the set of
+   assigned `seq` values is exactly `1..n` with no gaps.
+2. **Agreement between observers.** Both participants' sockets receive messages in ascending
+   `seq` order, and the durable history endpoint returns the same order after any reload.
+3. **Exactly-once effect.** A message with a given `clientMsgId` is persisted at most once and
+   delivered to each participant at most once, however many times the client retries it or the
+   broker redelivers it.
+
+**Preconditions.** The order is defined by the order in which the broker accepted the messages,
+not by wall-clock send time — there is no global clock and two concurrent senders on different
+machines have no meaningful "true" order to recover. The guarantee holds while `chat.messages`
+is keyed by `conversationId` and the partition count is not changed under a live conversation;
+increasing partitions re-keys existing conversations onto different partitions and breaks it.
+
+**Where it is enforced.** One conversation → one partition (the key) → one consumer thread (the
+`chat-writer` group) → one writer. `seq` is claimed with `UPDATE conversations SET last_seq =
+last_seq + 1 ... RETURNING`, in the same transaction as the insert, so a rolled-back write
+releases its number rather than leaving a gap. Deduplication is the
+`messages_conversation_sender_client_msg_id_key` unique constraint — a database guarantee, not
+application logic.
+
+**What proves it.** `bench/`, run against a live stack. Latest run, one node, WSL laptop:
+
+```
+50 conversations · 200 messages each · 100 concurrent sockets · 10,000 messages
+wall clock 12.09s · 827 msg/s end to end
+no gaps in seq           ok
+identical order observed ok
+no duplicate deliveries  ok
+nothing lost             ok
+```
+
+That number is a single-node laptop figure and is *not* the headline benchmark; Phase 8
+produces that on dedicated hardware with the load generator on a separate instance.
+
 ---
 
 ## Status
 
-Phase 1 of 8 — identity, domain and single-node chat. See `docs/plan.md` §5 for the phase list.
+Phase 2 of 8 — the ordering guarantee, proven on one node. See `docs/plan.md` §5.
 
-The ordering guarantee above is **not proven yet**. Phase 1 writes messages straight to
-Postgres from the request thread on a single node; Redpanda, cross-node fanout and the
-invariant harness arrive in Phases 2–4. Nothing here should be read as the finished claim.
+The guarantee below holds and is asserted by an automated harness. What is **not** proven
+yet is that it survives *horizontal scale* and *node failure* — there is still one node,
+so cross-node fanout is untested and nothing has been killed mid-run. Those are Phases 3
+and 4, and they are the ones that make the claim worth making.
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
 | 0 | Spike: Spring Boot 3 on virtual threads, Flyway, Testcontainers | ✅ passing |
 | 1 | Identity, domain, single-node chat | ✅ passing |
-| 2 | The ordering guarantee + harness v1 | — |
+| 2 | The ordering guarantee + harness v1 | ✅ passing |
 | 3 | Horizontal scale + harness v2 | — |
 | 4 | Chaos and correctness | — |
 | 5 | Presence, typing, receipts, unread, signup | — |
@@ -66,6 +107,17 @@ Tests:
 cd api && ./mvnw clean verify
 ```
 
+The invariant harness, against a running stack:
+
+```bash
+cd bench && ./mvnw clean package
+java -jar bench/target/shush-bench.jar --mode=ordering --conversations=50 --messages=200
+# exits 0 only if all four invariants hold
+```
+
+The harness has its own tests (`InvariantsTest`) that feed each check a stream violating it and
+assert it reports the violation — a harness that cannot fail would make a green run meaningless.
+
 Integration tests run against real Postgres via Testcontainers. Nothing is mocked — from
 Phase 2 onward that matters, because partition assignment is exactly the behaviour a mock
 would remove.
@@ -94,23 +146,63 @@ upgrade before the socket opens. A `send` frame is validated for membership, ass
 next `seq`, persisted and fanned out. Frames are camelCase JSON over a sealed interface, so
 the handler's switch is exhaustive at compile time.
 
+**The log.** A send is *produced* to Redpanda topic `chat.messages`, keyed by `conversationId`,
+with `acks=all` and an idempotent producer. The socket handler never writes to `messages`. The
+`chat-writer` consumer group is the only writer, and because the key is the conversation id,
+every message for one conversation lands on one partition and is handled by one thread.
+
+**Two-stage ack.** `sent` when the log accepts the message — it will not be lost. `delivered`
+once the writer has committed it and assigned a `seq` — the first moment anything can say where
+it sits in the order. Collapsing these into one ack would mean either lying about durability or
+withholding the ack until after a database round trip.
+
 **Sequencing and dedup.** `UPDATE conversations SET last_seq = last_seq + 1 ... RETURNING`
 takes the row lock that serialises concurrent senders, in the same transaction as the insert,
 so a rolled-back write cannot leave a gap. `clientMsgId` dedup is the
 `messages_conversation_sender_client_msg_id_key` unique constraint — the insert uses
 `ON CONFLICT DO NOTHING` and treats a zero row count as the duplicate signal, because raising
-the violation would abort the transaction and leave nothing readable. A duplicate is acked
-with the original `seq` and deliberately **not** fanned out again.
+the violation would abort the transaction and leave nothing readable. A duplicate is acked with
+the original `seq` and deliberately **not** delivered again.
 
 **History.** `GET /api/conversations/{id}/messages?before=<seq>&limit=<n>` — cursored on
 `seq`, not an offset, so a page stays stable while messages keep arriving underneath.
 
 ### Not yet true
 
-Single node. Fanout is a local `ConcurrentHashMap` lookup, there is no backplane, and
-messages are written from the request thread rather than through Redpanda. Every one of
-those is a Phase 2–4 problem, and the design notes above are written so those phases move
-*who* runs the rules rather than *what* the rules are.
+Single node. Fanout is still a local `ConcurrentHashMap` lookup behind a `MessageDispatcher`
+interface, and there is no Redis backplane, so cross-node delivery is entirely untested — the
+`--assert-multinode` flag exists in the harness precisely so a Phase 3 run cannot silently pass
+on one node. Nothing has been killed mid-run yet either. Phases 3 and 4.
+
+## Design decisions
+
+### Redpanda as the write-ahead log, not a database write followed by a publish
+
+**Chosen.** The client's message is produced to `chat.messages` first. A single consumer group
+is the only writer to Postgres, and it also triggers fanout.
+
+**Rejected: write to Postgres, then produce.** This is a dual write to two systems that cannot
+be made atomic. If the process dies between the commit and the produce, the message is durable
+but never delivered and never appears on anyone's socket — the worst failure mode available,
+because the sender was already acked. Fixing it properly needs a transactional outbox plus a
+relay, which is strictly more machinery than moving the write behind the log.
+
+**Rejected: write to Postgres only, fan out directly.** Ordering then depends on which node's
+transaction commits first, which is a race between concurrent senders on different machines
+with no arbiter. Two participants can and will observe different orders. `SERIALIZABLE` plus a
+per-conversation advisory lock could recover it, at the cost of serialising every send on a
+database lock — and the ordering would still be invisible to any later consumer.
+
+**What the chosen design costs, honestly.** A send now takes a broker round trip before the
+`sent` ack, adding latency a direct insert would not. Message delivery is asynchronous relative
+to the request, so the client needs the two-stage ack to distinguish durable from sequenced.
+And the broker is a new operational dependency that must be up for chat to work at all — the
+system fails closed on `produce_failed` rather than accepting a message it cannot order.
+
+**Why this is the right trade here.** Ordering under concurrent producers is the project's
+central claim, and this design makes it a property of the topology (one key → one partition →
+one consumer) rather than something enforced by locking discipline that a future change could
+quietly break.
 
 ## Architecture
 
@@ -161,5 +253,11 @@ for later review; each is the smallest reasonable choice, not a considered prefe
   `Quiet Otter 2`), matching the "adding a number when one is taken" line in `pre-plan.md` §7.
 - **The WebSocket lives at `/ws/chat` and accepts only `send` frames so far.** `read`,
   `typing` and `find` join the sealed `ClientFrame` interface in Phases 5 and 6.
+- **The bench harness shares no code with `api/`.** It speaks only the public HTTP and
+  WebSocket protocol, so a bug in a shared serialisation or ordering helper cannot cancel itself
+  out across both sides.
+- **`--messages` must be even**, since it is split between the two participants.
+- **The harness reports `nodeId` if a frame carries one**, and `--assert-multinode` fails a run
+  where fewer than two nodes participated. The server does not emit `nodeId` yet; Phase 3 adds it.
 - **`spring.config.import` reads the gitignored `.env`** so `./mvnw spring-boot:run` works
   without exporting variables by hand. `.env` remains gitignored; `.env.example` stays blank.

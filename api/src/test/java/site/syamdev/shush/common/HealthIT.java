@@ -5,11 +5,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class HealthIT extends AbstractPostgresIT {
+class HealthIT extends AbstractIT {
 
     @Autowired
     private TestRestTemplate rest;

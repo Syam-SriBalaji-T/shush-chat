@@ -27,5 +27,34 @@ services:
       timeout: 5s
       retries: 20
 
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.3.17
+    profiles: ["core", "full"]
+    command:
+      - redpanda
+      - start
+      # Tuned down deliberately: the deployment target is a 2 GB ARM box and a reviewer's
+      # `docker compose up` should not need a gigabyte for the broker (aim.md 4.2).
+      - --smp=1
+      - --memory=1G
+      - --overprovisioned
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://127.0.0.1:19092
+      - --mode=dev-container
+    ports:
+      - "127.0.0.1:${REDPANDA_PORT:-19092}:19092"
+      - "127.0.0.1:${REDPANDA_ADMIN_PORT:-19644}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres-data:
+  redpanda-data:

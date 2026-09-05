@@ -9,7 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 import site.syamdev.shush.support.TestUsers;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * A silently-dropped {@code spring.threads.virtual.enabled} would leave the whole
  * connection-per-thread design resting on a platform thread pool.
  */
-class VirtualThreadIT extends AbstractPostgresIT {
+class VirtualThreadIT extends AbstractIT {
 
     @Test
     void requestsAreServedOnVirtualThreads() {

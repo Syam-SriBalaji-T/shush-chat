@@ -29,6 +29,35 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  kafka:
+    bootstrap-servers: ${SHUSH_KAFKA_BOOTSTRAP:localhost:19092}
+    producer:
+      # acks=all plus idempotence is what makes ordering survive a retry. Without idempotence
+      # a retried send can land behind a batch that was already in flight, silently undoing
+      # the guarantee the partition key was chosen to provide.
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: chat-writer
+      auto-offset-reset: earliest
+      # Offsets are committed by the container after the listener returns, so a crash
+      # mid-write redelivers rather than loses. The dedup constraint absorbs the redelivery.
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: site.syamdev.shush.message
+        spring.json.value.default.type: site.syamdev.shush.message.ChatMessageEvent
+    listener:
+      ack-mode: record
+      # One listener thread per partition: a conversation is handled by exactly one thread,
+      # which is the in-process half of the ordering guarantee.
+      concurrency: ${SHUSH_KAFKA_CONCURRENCY:12}
+
   docker:
     compose:
       file: ../compose.yaml
@@ -52,6 +81,9 @@ management:
         enabled: true
 
 shush:
+  kafka:
+    chat-topic: chat.messages
+    partitions: 12
   jwt:
     # No default. A deployment without this fails to start rather than signing tokens with
     # a value anyone reading this repository already knows.

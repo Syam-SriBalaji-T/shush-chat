@@ -1,6 +1,5 @@
 package site.syamdev.shush.auth;
 
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import site.syamdev.shush.common.ApiException;
@@ -22,6 +21,7 @@ import java.util.UUID;
 public class AuthService {
 
     private static final int TOKEN_BYTES = 32;
+    private static final int NAME_ATTEMPTS = 10;
 
     private final UserRepository users;
     private final DeviceTokenRepository deviceTokens;
@@ -68,19 +68,22 @@ public class AuthService {
     }
 
     /**
-     * Retries on the display-name unique violation rather than checking availability first:
-     * a check-then-act would race with every other node allocating at the same moment.
+     * The unique index on {@code display_name} is the authority, not the availability check --
+     * a check-then-act races with every other allocation happening at the same moment, on this
+     * node and on any other.
      */
     private User insertWithAllocatedName(Instant now) {
-        for (int attempt = 0; attempt < 5; attempt++) {
+        for (int attempt = 0; attempt < NAME_ATTEMPTS; attempt++) {
             String name = nameAllocator.allocate(users::existsByDisplayName);
-            try {
-                return users.saveAndFlush(new User(UUID.randomUUID(), name, now));
-            } catch (DataIntegrityViolationException collision) {
-                // Another allocator won this name between the check and the insert. Try again.
+            UUID id = UUID.randomUUID();
+            if (users.insertIfNameFree(id, name, now) == 1) {
+                return new User(id, name, now);
             }
+            // Someone took it between the check and the insert. The row is untouched and the
+            // transaction is still usable, so simply try another name.
         }
-        throw new IllegalStateException("could not allocate a display name in 5 attempts");
+        throw new IllegalStateException(
+                "could not allocate a display name in " + NAME_ATTEMPTS + " attempts");
     }
 
     private String newDeviceToken() {

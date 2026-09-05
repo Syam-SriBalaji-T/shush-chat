@@ -1,8 +1,6 @@
 package site.syamdev.shush.realtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -10,34 +8,30 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import site.syamdev.shush.common.ApiException;
 import site.syamdev.shush.conversation.ConversationService;
+import site.syamdev.shush.message.ChatMessageProducer;
 import site.syamdev.shush.message.Message;
-import site.syamdev.shush.message.MessageService;
 
 import java.io.IOException;
 import java.util.UUID;
 
 /**
- * Phase 1: one node, so fanout is a lookup in the local registry.
- *
- * <p>Phase 3 replaces that with a Redis publish for every recipient including same-node ones,
- * so there is exactly one delivery path. Two paths is how same-node quietly works while
- * cross-node is broken.
+ * Accepts frames and produces to the log. It deliberately does not write to {@code messages}:
+ * a controller that inserts is the dual write this design exists to remove, and it would
+ * reintroduce the concurrent-writer reordering the partition key prevents.
  */
 @Component
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatWebSocketHandler.class);
-
     private final SessionRegistry registry;
     private final ConversationService conversations;
-    private final MessageService messages;
+    private final ChatMessageProducer producer;
     private final ObjectMapper json;
 
     ChatWebSocketHandler(SessionRegistry registry, ConversationService conversations,
-                         MessageService messages, ObjectMapper json) {
+                         ChatMessageProducer producer, ObjectMapper json) {
         this.registry = registry;
         this.conversations = conversations;
-        this.messages = messages;
+        this.producer = producer;
         this.json = json;
     }
 
@@ -76,29 +70,22 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
         try {
             conversations.requireParticipant(send.conversationId(), senderId);
-
             Message.Kind kind = send.kind() == null ? Message.Kind.TEXT : Message.Kind.fromWire(send.kind());
-            MessageService.Append append = messages.append(send.conversationId(), senderId,
-                    send.clientMsgId(), kind, send.body(), send.mediaKey());
 
-            reply(session, ServerFrame.Ack.accepted(append.message(), append.duplicate()));
+            // Block until the broker has acknowledged. Acking "sent" before the log accepted it
+            // would be a lie the client cannot detect, and on a virtual thread the wait costs a
+            // carrier thread nothing.
+            producer.produce(send.conversationId(), senderId, send.clientMsgId(),
+                    kind, send.body(), send.mediaKey()).join();
 
-            // A duplicate was already fanned out when it first arrived. Sending it again is
-            // exactly the reordering-and-repeats problem the dedup constraint exists to stop.
-            if (!append.duplicate()) {
-                fanout(append.message());
-            }
+            reply(session, ServerFrame.Ack.sent(send.clientMsgId()));
         } catch (ApiException e) {
             reply(session, new ServerFrame.Error(e.getCode(), e.getMessage(), send.clientMsgId()));
         } catch (IllegalArgumentException e) {
             reply(session, new ServerFrame.Error("invalid_send", "unsupported message kind", send.clientMsgId()));
-        }
-    }
-
-    private void fanout(Message message) throws IOException {
-        String payload = json.writeValueAsString(ServerFrame.MessageFrame.of(message));
-        for (UUID participantId : conversations.participantIds(message.getConversationId())) {
-            registry.sendTo(participantId, payload);
+        } catch (RuntimeException e) {
+            reply(session, new ServerFrame.Error("produce_failed",
+                    "the message log did not accept this message", send.clientMsgId()));
         }
     }
 

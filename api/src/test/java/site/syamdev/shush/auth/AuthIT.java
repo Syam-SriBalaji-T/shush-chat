@@ -5,14 +5,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import site.syamdev.shush.support.AbstractPostgresIT;
+import site.syamdev.shush.support.AbstractIT;
 import site.syamdev.shush.support.TestUsers;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class AuthIT extends AbstractPostgresIT {
+class AuthIT extends AbstractIT {
 
     @Test
     void anonymousAuthIssuesAWorkingJwt() {

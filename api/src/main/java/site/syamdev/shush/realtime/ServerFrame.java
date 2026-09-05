@@ -16,14 +16,22 @@ import java.util.UUID;
 public sealed interface ServerFrame {
 
     /**
-     * @param status {@code sent} once the message is durable and sequenced. Phase 2 splits this
-     *               into {@code sent} on produce and {@code delivered} after persistence.
+     * Two-stage on purpose. {@code sent} means the log accepted it and it will not be lost;
+     * {@code delivered} means it is committed to Postgres with a sequence number, which is the
+     * first moment anything can say where it sits in the conversation's order.
+     *
+     * @param seq null on {@code sent} -- no sequence number exists until the writer assigns one
      */
-    record Ack(UUID clientMsgId, String status, UUID messageId, long seq, boolean duplicate)
+    record Ack(UUID clientMsgId, String status, UUID messageId, Long seq, boolean duplicate)
             implements ServerFrame {
 
-        static Ack accepted(Message message, boolean duplicate) {
-            return new Ack(message.getClientMsgId(), "sent", message.getId(), message.getSeq(), duplicate);
+        static Ack sent(UUID clientMsgId) {
+            return new Ack(clientMsgId, "sent", null, null, false);
+        }
+
+        static Ack delivered(Message message, boolean duplicate) {
+            return new Ack(message.getClientMsgId(), "delivered", message.getId(),
+                    message.getSeq(), duplicate);
         }
     }
 
