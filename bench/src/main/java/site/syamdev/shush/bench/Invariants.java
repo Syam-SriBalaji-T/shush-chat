@@ -3,11 +3,13 @@ package site.syamdev.shush.bench;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
 /**
  * The four properties the project claims. Each returns a description of what went wrong, or
@@ -94,6 +96,81 @@ final class Invariants {
         if (!persisted.equals(wanted)) {
             failures.add("conversation %s: persisted history is not 1..%d in order"
                     .formatted(conversationId, sent));
+        }
+        return failures;
+    }
+
+    /**
+     * The log holds exactly 1..N.
+     *
+     * <p>Separate from {@link #nothingLost} because across a node failure the two participants
+     * legitimately observe different subsets over their sockets, so comparing socket counts to
+     * the sent count would be meaningless. What must still hold absolutely is the durable record.
+     */
+    static List<String> persistedIsExactly(UUID conversationId, int expected, List<Long> persisted) {
+        List<String> failures = new ArrayList<>();
+        List<Long> wanted = IntStream.rangeClosed(1, expected).mapToObj(Long::valueOf).toList();
+        if (!persisted.equals(wanted)) {
+            failures.add("conversation %s: expected %d persisted messages numbered 1..%d in order, got %d"
+                    .formatted(conversationId, expected, expected, persisted.size()));
+        }
+        return failures;
+    }
+
+    /**
+     * A single observer never went backwards. Across a node failure the two participants
+     * legitimately see different *subsets* -- one was disconnected for a while -- so the
+     * cross-observer comparison no longer applies, but neither stream may reorder. Both streams
+     * being ascending over the same 1..N is what makes their common messages agree.
+     */
+    static List<String> strictlyAscending(UUID conversationId, String who, List<JsonNode> observed) {
+        List<String> failures = new ArrayList<>();
+        long previous = 0;
+        for (JsonNode frame : observed) {
+            long seq = frame.path("seq").asLong();
+            if (seq <= previous) {
+                failures.add("conversation %s: %s received seq %d after seq %d"
+                        .formatted(conversationId, who, seq, previous));
+                return failures;
+            }
+            previous = seq;
+        }
+        return failures;
+    }
+
+    /**
+     * A client that missed messages while its node was down can ask for them and get exactly
+     * what it missed, in order. Durability is worth nothing if there is no way to collect it.
+     */
+    static List<String> resumeIsComplete(UUID conversationId, String who,
+                                         long resumeFrom, List<Long> resumed, int expected) {
+        List<String> failures = new ArrayList<>();
+        List<Long> wanted = LongStream.rangeClosed(resumeFrom + 1, expected).boxed().toList();
+        if (!resumed.equals(wanted)) {
+            failures.add("conversation %s: %s resumed from seq %d and got %d message(s) instead of %d in order"
+                    .formatted(conversationId, who, resumeFrom, resumed.size(), wanted.size()));
+        }
+        return failures;
+    }
+
+    /** Every message that was sent is in the log exactly once, whatever happened to the nodes. */
+    static List<String> everySentMessagePersistedOnce(UUID conversationId,
+                                                      Collection<UUID> sentClientMsgIds,
+                                                      List<String> persistedClientMsgIds) {
+        List<String> failures = new ArrayList<>();
+        Set<String> persisted = new HashSet<>(persistedClientMsgIds);
+
+        if (persisted.size() != persistedClientMsgIds.size()) {
+            failures.add("conversation %s: the log holds a clientMsgId more than once"
+                    .formatted(conversationId));
+        }
+        List<UUID> missing = sentClientMsgIds.stream()
+                .filter(id -> !persisted.contains(id.toString()))
+                .limit(10)
+                .toList();
+        if (!missing.isEmpty()) {
+            failures.add("conversation %s: %d acknowledged message(s) are not in the log, e.g. %s"
+                    .formatted(conversationId, missing.size(), missing));
         }
         return failures;
     }

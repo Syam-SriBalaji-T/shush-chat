@@ -1,8 +1,11 @@
 package site.syamdev.shush.realtime;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import site.syamdev.shush.config.NodeIdentity;
 import org.springframework.web.socket.PingMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -28,6 +31,15 @@ public class SessionRegistry {
     private static final Logger log = LoggerFactory.getLogger(SessionRegistry.class);
 
     private final Map<UUID, Map<String, WebSocketSession>> sessionsByUser = new ConcurrentHashMap<>();
+
+    SessionRegistry(MeterRegistry meters, NodeIdentity node) {
+        // Per node, not aggregated: whether connections are actually spread across replicas is
+        // the thing worth seeing, and a sum would hide exactly that.
+        Gauge.builder("shush.websocket.connections", this, SessionRegistry::openConnectionCount)
+                .description("websocket sessions held by this node")
+                .tag("node", node.nodeId())
+                .register(meters);
+    }
 
     /** @return true if this is the user's first session on this node */
     public boolean register(UUID userId, WebSocketSession session) {
@@ -59,6 +71,10 @@ public class SessionRegistry {
 
     public Collection<WebSocketSession> sessionsOf(UUID userId) {
         return sessionsByUser.getOrDefault(userId, Map.of()).values();
+    }
+
+    public List<WebSocketSession> allSessions() {
+        return sessionsByUser.values().stream().flatMap(sessions -> sessions.values().stream()).toList();
     }
 
     public int openConnectionCount() {

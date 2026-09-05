@@ -22,6 +22,11 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
                                                                    long beforeSeq,
                                                                    Limit limit);
 
+    /** The resume path: everything a returning client has not seen, oldest first. */
+    List<Message> findByConversationIdAndSeqGreaterThanOrderBySeqAsc(UUID conversationId,
+                                                                     long afterSeq,
+                                                                     Limit limit);
+
     List<Message> findByConversationIdOrderBySeqAsc(UUID conversationId);
 
     long countByConversationId(UUID conversationId);

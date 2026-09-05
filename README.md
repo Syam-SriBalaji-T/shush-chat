@@ -39,12 +39,14 @@ releases its number rather than leaving a gap. Deduplication is the
 application logic.
 
 **What proves it.** `bench/`, run against a live stack through nginx, with clients landing on
-whichever of three replicas `least_conn` gives them:
+whichever of three replicas `least_conn` gives them.
+
+*Ordering mode* — both participants sending as fast as the socket allows:
 
 ```
 50 conversations · 200 messages each · 100 concurrent sockets · 10,000 messages
 nodes serving [api-1, api-2, api-3]
-wall clock 16.7–34.4s over three runs · 291–598 msg/s end to end
+wall clock 16.7–53.2s over four runs · 188–598 msg/s end to end
 no gaps in seq           ok
 identical order observed ok
 no duplicate deliveries  ok
@@ -55,20 +57,41 @@ nothing lost             ok
 misconfigured stack cannot pass by quietly being single-node. That flag is itself checked
 against a one-node run, where it correctly fails.
 
-These are laptop figures — three JVMs plus Postgres, Redis and Redpanda in Docker on WSL,
-with the load generator on the same machine — and the spread between runs shows it. They are
-*not* the headline benchmark; Phase 8 produces that on dedicated hardware with the load
-generator on a separate instance, which is what makes a number credible.
+*Chaos mode* — the same invariants, with `docker kill` on a replica 15 seconds in, while
+traffic is still flowing:
+
+```
+50 conversations · 500 messages each · 100 sockets · 25,000 messages
+api-2 killed at second 15, mid-send
+22-37 socket reconnections, each retransmitting its unacked message, over five runs
+no reordering across the kill   ok
+no duplicate deliveries         ok
+nothing lost                    ok
+every send in the log once      ok
+resume returns what was missed  ok
+the kill actually disturbed it  ok
+```
+
+`docker kill`, not `docker stop`: a SIGKILL gives the process no chance to drain sockets or
+commit consumer offsets. Correctness must not depend on a dying node behaving politely, and a
+graceful stop would quietly be testing the easy case.
+
+These are laptop figures — three JVMs plus Postgres, Redis and Redpanda in Docker on WSL, with
+the load generator on the same machine — and the spread between runs shows it. The chaos-mode
+throughput is lower still because that run deliberately *paces* its sends over 40 s so the kill
+lands mid-flight; it is an offered rate, not a ceiling. None of these are the headline
+benchmark; Phase 8 produces that on dedicated hardware with the load generator on a separate
+instance, which is what makes a number credible.
 
 ---
 
 ## Status
 
-Phase 3 of 8 — the guarantee holds across three replicas behind a load balancer, with no
-sticky sessions. See `docs/plan.md` §5.
+Phase 4 of 8 — the guarantee holds across three replicas behind a load balancer, with no
+sticky sessions, **while a replica is killed mid-conversation**. See `docs/plan.md` §5.
 
-What is **not** proven yet is that it survives *node failure*: nothing has been killed
-mid-run. That is Phase 4, and it is the one that makes the claim worth making.
+The resume claim is now proven end to end. What remains is product surface — presence,
+matching, media, the test client — and the benchmark on real hardware.
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
@@ -76,7 +99,7 @@ mid-run. That is Phase 4, and it is the one that makes the claim worth making.
 | 1 | Identity, domain, single-node chat | ✅ passing |
 | 2 | The ordering guarantee + harness v1 | ✅ passing |
 | 3 | Horizontal scale + harness v2 | ✅ passing |
-| 4 | Chaos and correctness | — |
+| 4 | Chaos and correctness | ✅ passing |
 | 5 | Presence, typing, receipts, unread, signup | — |
 | 6 | Matching, friends, invites, blocks | — |
 | 7 | Media and the test client | — |
@@ -133,10 +156,31 @@ java -jar bench/target/shush-bench.jar --mode=ordering --conversations=50 --mess
 java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
      --conversations=50 --messages=200 --assert-multinode
 # exits 0 only if all four invariants hold AND at least two nodes served the run
+
+# and with a replica killed 15 seconds in, mid-send
+java -jar bench/target/shush-bench.jar --mode=chaos --via=nginx \
+     --kill-node=api-2 --at-second=15 --conversations=50 --messages=500
+# exits 0 only if nothing was lost, duplicated or reordered across the failure
 ```
 
-The harness has its own tests (`InvariantsTest`) that feed each check a stream violating it and
-assert it reports the violation — a harness that cannot fail would make a green run meaningless.
+Chaos mode leaves the replica dead. Bring it back with
+`docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d` before the next
+run — the harness fails a run in which nothing reconnected, so a second run against an
+already-dead node reports that rather than passing vacuously.
+
+Metrics, if you want to watch it happen:
+
+```bash
+docker compose -f compose.yaml -f compose.replicas.yaml -f compose.observability.yaml \
+  --profile core up -d
+# Grafana on :3001, Prometheus on :9090, scraping each replica separately
+```
+
+The harness has its own tests (`InvariantsTest`, 17 of them) that feed each check a stream
+violating it and assert it reports the violation — a harness that cannot fail would make a green
+run meaningless. The two "did this run prove anything" guards are checked the same way:
+`--assert-multinode` is run against a single node, and the chaos mode is run against an
+already-dead replica. Both correctly fail rather than passing vacuously.
 
 Integration tests run against real Postgres via Testcontainers. Nothing is mocked — from
 Phase 2 onward that matters, because partition assignment is exactly the behaviour a mock
@@ -205,12 +249,26 @@ cheap, whereas an unbounded buffer takes every other user on that node down with
 **Heartbeat.** Every socket is pinged every 30 s, comfortably inside nginx's `proxy_read_timeout`,
 because a quiet conversation is completely normal and must not lose its connection.
 
+**Resume.** `GET /api/conversations/{id}/messages?after=<seq>` returns everything a returning
+client missed, oldest first. It is the same index as scrollback, walked in the other direction,
+and it is what makes a terminated or killed socket a non-event rather than a hole in the
+conversation.
+
+**Failure handling.** A killed node's sockets reconnect through the load balancer and land on a
+different replica. Its Kafka partitions are reassigned to the survivors; a message that was
+mid-write is redelivered and absorbed by the dedup constraint. A message the node had read from
+the socket but not yet produced is genuinely lost — and the client, which never saw its `sent`
+ack, retransmits it with the same `clientMsgId`.
+
+**Graceful shutdown.** A *planned* stop drains sockets with `GOING_AWAY` first, so clients
+reconnect immediately instead of waiting for a TCP timeout. That is a deploy nicety, not a
+correctness mechanism, which is exactly why the harness kills rather than stops.
+
 ### Not yet true
 
-Nothing has been killed mid-run. Graceful shutdown, consumer rebalance correctness under a
-partition move, and the chaos harness are Phase 4. There is also no reconnect-and-resume in the
-client yet, so a terminated socket currently re-syncs by refetching history rather than
-resuming from a known `seq`.
+Presence, typing indicators, read receipts, unread counts, signup, matching, friends and media
+are all still to come (Phases 5–7), and there is no UI beyond the harness. The benchmark numbers
+above are laptop numbers, not the Phase 8 measurement.
 
 ## Design decisions
 
@@ -303,6 +361,58 @@ broker.
 Full diagram lands in Phase 3, once cross-node fanout exists. The shape it is being built
 towards is in `docs/plan.md` §1.
 
+## Known Limitations
+
+Written down because naming where your own design breaks is the point of the exercise.
+
+**A message read from a socket but not yet produced is lost if that node dies.** The window is
+sub-millisecond and the client recovers by retransmitting an unacked `clientMsgId`, but the
+recovery is the *client's* responsibility — a client that does not track unacked sends will
+silently drop that message. The `sent` ack is the durability boundary and nothing before it is
+a promise.
+
+**Ordering is per conversation and nothing more.** There is no ordering between conversations,
+and none between a message and, say, a friend request. That is deliberate — a global order would
+mean a single partition and no horizontal scale at all — but it means "Alice's message arrived
+before Bob's" is only meaningful within one conversation.
+
+**Increasing the partition count breaks the guarantee for existing conversations.** Adding
+partitions re-hashes keys, so a conversation can move to a different partition while messages
+for it are still in flight on the old one, and two consumers can then be writing it at once. It
+is set to 12 up front for that reason. Changing it safely needs a drain-and-migrate, which is
+not implemented.
+
+**Redis is a hard dependency for delivery, though not for durability.** If Redis is unavailable,
+messages are still committed and sequenced correctly and history serves them, but nothing is
+pushed to a live socket. There is no fallback path, deliberately — a same-node shortcut would
+reintroduce the two-path problem described above.
+
+**Consumer failure detection is tuned to 10 s, not to zero.** Between a node dying and the group
+noticing, its partitions are stranded: those conversations accept sends (the log takes them) but
+nothing is written or delivered until the rebalance completes. Lowering it further trades
+against evicting healthy consumers during a GC pause.
+
+**The unread counter is maintained, not derived.** It is incremented by the writer rather than
+counted at read time, which is the entire point, but it can drift if a transaction is rolled
+back after the increment. `plan.md` §3.10 specifies a nightly reconciliation job; it is not
+implemented yet (Phase 6).
+
+**A partition stalls rather than dropping a record it cannot write.** Spring Kafka's default
+error handler retries ten times and then skips the record — silent message loss under database
+pressure. The writer instead retries indefinitely, so a persistent failure pauses the
+conversations on that partition until it clears. That is the deliberate trade for a system whose
+claim is that nothing is lost, but it does mean one bad dependency can stop one twelfth of
+conversations rather than degrading all of them evenly.
+
+**Backpressure terminates rather than degrades.** A client 1 MB behind has its socket closed.
+That is correct for a chat service — reconnect and re-sync is cheap — but it means a very slow
+network can produce a reconnect loop, and there is no exponential backoff on the server side to
+discourage it.
+
+**No authentication on the Redis or Kafka connections.** Both are reachable only on the compose
+network and bound to loopback on the host. That is appropriate for a local stack and would not
+be for a deployment.
+
 ## Documentation
 
 | File | What it settles |
@@ -360,5 +470,26 @@ for later review; each is the smallest reasonable choice, not a considered prefe
   silently never subscribed.
 - **nginx listens on 8081, not 8080**, so the replica stack and a host-run `spring-boot:run`
   can be up at the same time without clashing.
+- **`/api/health` is liveness and `/api/health/ready` is readiness.** Phase 0 had a single
+  endpoint delegating to the full Actuator aggregate; under chaos-run load the container probe
+  timed out on dependency checks and declared a healthy node dead. Liveness now performs no I/O.
+  Readiness checks Postgres and Redis but deliberately **not** Kafka: a broker blip must not mark
+  every replica unready and take the service down, since history, auth and existing sockets keep
+  working and a failed produce is already reported as `produce_failed`.
+- **Listener concurrency is 4 per replica in the three-replica stack** (12 partitions ÷ 3), not
+  the single-node default of 12. Leaving it at 12 gives the group 36 members for 12 partitions —
+  24 idle, and every rebalance after a kill has to shuffle all 36.
+- **Chaos mode paces its sends over 40 s by default** (`--send-seconds`). Firing everything as
+  fast as possible finishes in about two seconds, so a kill scheduled for later lands after the
+  last send and tests nothing.
+- **The harness treats a message as sent only when the server acks it**, and retransmits unacked
+  ones with the same `clientMsgId`. Counting a successful socket write as a send would report
+  loss that is really the client's failure to retry.
+- **Replica containers have an explicit 768 MB memory limit and the JVM takes 60% of it.**
+  `MaxRAMPercentage` is a percentage of the *container's* limit, and with no limit set that is
+  the whole host — so three replicas each sized themselves for the entire machine, the box went
+  into swap, and the broker began stalling its reactor for hundreds of milliseconds. The
+  symptom looked exactly like message loss. The remaining 40% is metaspace, code cache, thread
+  stacks and direct buffers, not slack.
 - **`spring.config.import` reads the gitignored `.env`** so `./mvnw spring-boot:run` works
   without exporting variables by hand. `.env` remains gitignored; `.env.example` stays blank.

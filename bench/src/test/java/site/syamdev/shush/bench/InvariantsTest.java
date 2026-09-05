@@ -63,6 +63,57 @@ class InvariantsTest {
     }
 
     @Test
+    void persistedIsExactlyAcceptsACompleteLog() {
+        assertThat(Invariants.persistedIsExactly(CONVERSATION, 3, List.of(1L, 2L, 3L))).isEmpty();
+    }
+
+    @Test
+    void persistedIsExactlyCatchesAHoleInTheLog() {
+        assertThat(Invariants.persistedIsExactly(CONVERSATION, 3, List.of(1L, 3L)))
+                .singleElement().asString().contains("persisted messages numbered 1..3");
+    }
+
+    @Test
+    void strictlyAscendingCatchesAnObserverGoingBackwards() {
+        assertThat(Invariants.strictlyAscending(CONVERSATION, "alice", frames(1, 3, 2)))
+                .singleElement().asString().contains("received seq 2 after seq 3");
+    }
+
+    @Test
+    void strictlyAscendingAllowsAGapFromBeingDisconnected() {
+        // Missing 2 and 3 is not reordering -- that observer was simply not connected.
+        assertThat(Invariants.strictlyAscending(CONVERSATION, "alice", frames(1, 4, 5))).isEmpty();
+    }
+
+    @Test
+    void resumeIsCompleteCatchesAShortResume() {
+        assertThat(Invariants.resumeIsComplete(CONVERSATION, "alice", 2, List.of(3L, 4L), 6))
+                .singleElement().asString().contains("resumed from seq 2");
+    }
+
+    @Test
+    void resumeIsCompleteAcceptsExactlyWhatWasMissed() {
+        assertThat(Invariants.resumeIsComplete(CONVERSATION, "alice", 2, List.of(3L, 4L, 5L, 6L), 6))
+                .isEmpty();
+    }
+
+    @Test
+    void everySentMessagePersistedOnceCatchesAnAcknowledgedMessageMissingFromTheLog() {
+        UUID acknowledged = UUID.randomUUID();
+        assertThat(Invariants.everySentMessagePersistedOnce(CONVERSATION,
+                List.of(acknowledged), List.of(UUID.randomUUID().toString())))
+                .anySatisfy(failure -> assertThat(failure).contains("not in the log"));
+    }
+
+    @Test
+    void everySentMessagePersistedOnceCatchesTheSameIdWrittenTwice() {
+        UUID sent = UUID.randomUUID();
+        assertThat(Invariants.everySentMessagePersistedOnce(CONVERSATION,
+                List.of(sent), List.of(sent.toString(), sent.toString())))
+                .anySatisfy(failure -> assertThat(failure).contains("more than once"));
+    }
+
+    @Test
     void nothingLostAcceptsAMatchingRun() {
         assertThat(Invariants.nothingLost(CONVERSATION, 3, 3, List.of(1L, 2L, 3L))).isEmpty();
     }

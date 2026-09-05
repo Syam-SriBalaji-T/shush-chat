@@ -16,6 +16,11 @@ spring:
     url: ${SHUSH_DB_URL:jdbc:postgresql://localhost:55432/shush}
     username: ${SHUSH_DB_USER:shush}
     password: ${SHUSH_DB_PASSWORD:shush}
+    hikari:
+      # One partition's writer thread can be mid-transaction on every listener thread at once,
+      # and web requests still need connections. The default 10 starves them against 12
+      # consumers. Three replicas at 16 stays well inside Postgres's default max_connections.
+      maximum-pool-size: ${SHUSH_DB_POOL:16}
 
   jpa:
     # Flyway owns the schema; Hibernate only checks the entities agree with it.
@@ -57,6 +62,12 @@ spring:
       properties:
         spring.json.trusted.packages: site.syamdev.shush.message
         spring.json.value.default.type: site.syamdev.shush.message.ChatMessageEvent
+        # A killed node leaves without saying goodbye, so its partitions are stranded until the
+        # group notices. The 45s default is a long time for a chat service to stop writing one
+        # twelfth of its conversations. The cost of 10s is more spurious rebalances -- a long GC
+        # pause can now evict a healthy consumer -- which the dedup constraint makes survivable.
+        session.timeout.ms: 10000
+        heartbeat.interval.ms: 3000
     listener:
       ack-mode: record
       # One listener thread per partition: a conversation is handled by exactly one thread,
@@ -84,6 +95,17 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          # No dependency checks. Liveness answers "is this process still serving?", and a
+          # probe that does I/O will time out under exactly the load where killing a healthy
+          # node is most damaging.
+          include: livenessState
+        readiness:
+          # Kafka is deliberately absent. A broker blip must not mark every replica unready and
+          # take the whole service out: history, auth and existing sockets all keep working, and
+          # a failed produce is already reported to the client as produce_failed.
+          include: readinessState, db, redis
 
 shush:
   # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown

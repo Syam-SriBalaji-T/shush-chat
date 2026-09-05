@@ -63,6 +63,44 @@ final class ShushApi {
         }
     }
 
+    /**
+     * The resume path a returning client uses: everything after {@code afterSeq}, oldest first.
+     */
+    List<Long> seqsSince(Session caller, UUID conversationId, long afterSeq)
+            throws IOException, InterruptedException {
+        List<Long> seqs = new ArrayList<>();
+        long cursor = afterSeq;
+        while (true) {
+            JsonNode page = get("/api/conversations/" + conversationId
+                    + "/messages?limit=100&after=" + cursor, caller.jwt());
+            page.path("messages").forEach(m -> seqs.add(m.path("seq").asLong()));
+
+            JsonNode next = page.path("nextAfter");
+            if (next.isNull() || next.isMissingNode()) {
+                return seqs;
+            }
+            cursor = next.asLong();
+        }
+    }
+
+    /** Every clientMsgId in the log for this conversation, oldest first. */
+    List<String> persistedClientMsgIds(Session caller, UUID conversationId)
+            throws IOException, InterruptedException {
+        List<String> ids = new ArrayList<>();
+        long cursor = 0;
+        while (true) {
+            JsonNode page = get("/api/conversations/" + conversationId
+                    + "/messages?limit=100&after=" + cursor, caller.jwt());
+            page.path("messages").forEach(m -> ids.add(m.path("clientMsgId").asText()));
+
+            JsonNode next = page.path("nextAfter");
+            if (next.isNull() || next.isMissingNode()) {
+                return ids;
+            }
+            cursor = next.asLong();
+        }
+    }
+
     private JsonNode get(String path, String jwt) throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl + path)).GET();
         if (jwt != null) {

@@ -23,6 +23,13 @@ EXPOSE 8080
 
 # MaxRAMPercentage rather than a fixed -Xmx: the same image runs on a 2 GB ARM box and on the
 # resized benchmark instance, and the heap should follow the container limit either way.
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+UseZGC -XX:+ZGenerational"
+#
+# 60, not 70+: the remainder is not slack, it is metaspace, code cache, thread stacks, GC
+# structures and direct buffers. Size the heap to the whole limit and the container gets
+# OOM-killed by the kernel, which looks like a crash rather than an out-of-memory error.
+#
+# This only works if the container HAS a limit -- with none, the percentage is taken against
+# the whole host, and every replica sizes itself for the entire machine.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=60 -XX:+UseZGC -XX:+ZGenerational"
 
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

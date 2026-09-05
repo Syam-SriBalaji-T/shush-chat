@@ -80,7 +80,28 @@ public class MessageService {
         return new Page(window, nextBefore);
     }
 
+    /**
+     * Everything after {@code afterSeq}, oldest first -- what a client asks for when it
+     * reconnects and needs the messages that arrived while it was gone (pre-plan.md 3: anything
+     * sent while someone is away reaches them when they return, in the right order).
+     */
+    @Transactional(readOnly = true)
+    public Page since(UUID conversationId, long afterSeq, int limit) {
+        int size = Math.clamp(limit, 1, MAX_PAGE_SIZE);
+        List<Message> found = messages.findByConversationIdAndSeqGreaterThanOrderBySeqAsc(
+                conversationId, afterSeq, Limit.of(size + 1));
+
+        boolean more = found.size() > size;
+        List<Message> window = more ? found.subList(0, size) : found;
+        Long nextAfter = more ? window.getLast().getSeq() : null;
+        return new Page(List.copyOf(window), nextAfter);
+    }
+
     public record Append(Message message, boolean duplicate) {}
 
-    public record Page(List<Message> messages, Long nextBefore) {}
+    /**
+     * @param nextCursor the cursor for the following page, or null when this page is the end.
+     *                   For history it is a {@code before}; for resume it is an {@code after}.
+     */
+    public record Page(List<Message> messages, Long nextCursor) {}
 }

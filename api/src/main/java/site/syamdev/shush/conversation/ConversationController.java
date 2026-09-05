@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import site.syamdev.shush.common.ApiException;
 import site.syamdev.shush.common.CurrentUser;
 import site.syamdev.shush.message.Message;
 import site.syamdev.shush.message.MessageService;
@@ -35,10 +36,25 @@ class ConversationController {
     @GetMapping("/{conversationId}/messages")
     HistoryResponse history(@PathVariable UUID conversationId,
                             @RequestParam(required = false) Long before,
+                            @RequestParam(required = false) Long after,
                             @RequestParam(defaultValue = "50") int limit) {
         conversations.requireParticipant(conversationId, currentUser.requireId());
-        MessageService.Page page = messages.history(conversationId, before, limit);
-        return new HistoryResponse(page.messages().stream().map(MessageView::of).toList(), page.nextBefore());
+
+        if (before != null && after != null) {
+            throw ApiException.badRequest("conflicting_cursors",
+                    "pass either before or after, not both");
+        }
+
+        // `after` is the resume path -- a client that reconnects asks for what it missed, in
+        // order. `before` is scrollback. They walk the same index in opposite directions.
+        MessageService.Page page = after != null
+                ? messages.since(conversationId, after, limit)
+                : messages.history(conversationId, before, limit);
+
+        List<MessageView> view = page.messages().stream().map(MessageView::of).toList();
+        return after != null
+                ? new HistoryResponse(view, null, page.nextCursor())
+                : new HistoryResponse(view, page.nextCursor(), null);
     }
 
     record MessageView(UUID id, UUID conversationId, UUID senderId, long seq, String kind,
@@ -51,5 +67,5 @@ class ConversationController {
         }
     }
 
-    record HistoryResponse(List<MessageView> messages, Long nextBefore) {}
+    record HistoryResponse(List<MessageView> messages, Long nextBefore, Long nextAfter) {}
 }

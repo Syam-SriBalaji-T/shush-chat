@@ -17,6 +17,7 @@ record BenchOptions(String mode,
                     boolean assertMultinode,
                     String killNode,
                     int killAtSecond,
+                    Duration sendWindow,
                     Duration settleTimeout) {
 
     static BenchOptions parse(String[] args) {
@@ -48,7 +49,12 @@ record BenchOptions(String mode,
                 Boolean.parseBoolean(flags.getOrDefault("assert-multinode", "false")),
                 flags.get("kill-node"),
                 Integer.parseInt(flags.getOrDefault("at-second", "15")),
-                Duration.ofSeconds(Long.parseLong(flags.getOrDefault("settle-seconds", "120"))));
+                // Chaos runs spread their sends over a window by default. Firing everything as
+                // fast as possible finishes in a second or two, so a kill scheduled for later
+                // lands after the last send and tests nothing about sending through a failure.
+                Duration.ofSeconds(Long.parseLong(flags.getOrDefault("send-seconds",
+                        "chaos".equals(flags.getOrDefault("mode", "ordering")) ? "40" : "0"))),
+                Duration.ofSeconds(Long.parseLong(flags.getOrDefault("settle-seconds", "180"))));
     }
 
     String websocketUrl() {
@@ -61,6 +67,13 @@ record BenchOptions(String mode,
 
     int totalMessages() {
         return conversations * messages;
+    }
+
+    /** Gap between one participant's sends, or zero to send as fast as the socket allows. */
+    Duration sendInterval() {
+        return sendWindow.isZero()
+                ? Duration.ZERO
+                : sendWindow.dividedBy(messagesPerParticipant());
     }
 
     private static String stripTrailingSlash(String url) {
