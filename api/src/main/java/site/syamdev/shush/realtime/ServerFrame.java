@@ -11,7 +11,8 @@ import java.util.UUID;
 @JsonSubTypes({
         @JsonSubTypes.Type(value = ServerFrame.Ack.class, name = "ack"),
         @JsonSubTypes.Type(value = ServerFrame.MessageFrame.class, name = "message"),
-        @JsonSubTypes.Type(value = ServerFrame.Error.class, name = "error")
+        @JsonSubTypes.Type(value = ServerFrame.Error.class, name = "error"),
+        @JsonSubTypes.Type(value = ServerFrame.Hello.class, name = "hello")
 })
 public sealed interface ServerFrame {
 
@@ -47,4 +48,14 @@ public sealed interface ServerFrame {
     }
 
     record Error(String code, String message, UUID clientMsgId) implements ServerFrame {}
+
+    /**
+     * Sent once, immediately after the socket opens.
+     *
+     * <p>{@code nodeId} is diagnostic only -- nothing addresses a node, and a client that
+     * reconnects will usually land somewhere else. It exists so an operator, and the load
+     * harness, can tell that a run genuinely spanned replicas instead of quietly proving
+     * nothing on one.
+     */
+    record Hello(UUID userId, String nodeId) implements ServerFrame {}
 }

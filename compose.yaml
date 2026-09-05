@@ -27,6 +27,20 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7.4.7-alpine
+    profiles: ["core", "full"]
+    # No persistence: everything Redis holds here (presence, typing, the backplane) is
+    # derived state that must not outlive a restart. Losing it is correct behaviour.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v25.3.17
     profiles: ["core", "full"]

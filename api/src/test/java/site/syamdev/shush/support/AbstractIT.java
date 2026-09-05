@@ -6,13 +6,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.redpanda.RedpandaContainer;
 
 /**
- * Real Postgres and a real broker. Nothing here is mocked, and the broker in particular never
- * will be: partition assignment is exactly the behaviour a mock removes, and it is the
- * behaviour the whole ordering claim rests on.
+ * Real Postgres, real Redis, a real broker. Nothing here is mocked, and the broker in
+ * particular never will be: partition assignment is exactly the behaviour a mock removes, and
+ * it is the behaviour the whole ordering claim rests on.
  *
  * <p>Containers are started in a static initialiser rather than by the JUnit
  * {@code @Testcontainers} extension: that extension stops a static container in each test
@@ -25,14 +26,19 @@ import org.testcontainers.redpanda.RedpandaContainer;
 public abstract class AbstractIT {
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16.10-alpine");
+    public static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16.10-alpine");
+
+    @ServiceConnection(name = "redis")
+    public static final GenericContainer<?> REDIS =
+            new GenericContainer<>("redis:7.4.7-alpine").withExposedPorts(6379);
 
     @ServiceConnection
-    static final RedpandaContainer REDPANDA =
+    public static final RedpandaContainer REDPANDA =
             new RedpandaContainer("docker.redpanda.com/redpandadata/redpanda:v25.3.17");
 
     static {
         POSTGRES.start();
+        REDIS.start();
         REDPANDA.start();
     }
 

@@ -29,6 +29,11 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  data:
+    redis:
+      host: ${SHUSH_REDIS_HOST:localhost}
+      port: ${SHUSH_REDIS_PORT:56379}
+
   kafka:
     bootstrap-servers: ${SHUSH_KAFKA_BOOTSTRAP:localhost:19092}
     producer:
@@ -81,6 +86,14 @@ management:
         enabled: true
 
 shush:
+  # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown
+  # to have genuinely spanned nodes.
+  node-id: ${SHUSH_NODE_ID:}
+  websocket:
+    heartbeat: 30s
+    send-time-limit-millis: 10000
+    # 1 MB of undrained frames means the client is not keeping up. Terminate rather than buffer.
+    buffer-size-limit-bytes: 1048576
   kafka:
     chat-topic: chat.messages
     partitions: 12

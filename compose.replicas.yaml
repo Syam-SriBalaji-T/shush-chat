@@ -1,0 +1,90 @@
+# Overlay: three application replicas behind nginx.
+#
+#   docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d --build
+#
+# Three replicas from day one is not decoration (aim.md R4). Cross-node fanout is the problem
+# the whole backplane exists to solve, and it simply does not occur on one node -- so a
+# single-node stack would let it be broken without anything noticing.
+
+services:
+  api-1: &api
+    build:
+      context: ./api
+    image: shush-api:local
+    profiles: ["core", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      SHUSH_NODE_ID: api-1
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      # Replicas run infrastructure they did not start; they must never try to manage it.
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+    # No published port. The only way in is nginx, which is the point.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health | grep -q UP"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  api-2:
+    <<: *api
+    environment:
+      SHUSH_NODE_ID: api-2
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+
+  api-3:
+    <<: *api
+    environment:
+      SHUSH_NODE_ID: api-3
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:?set SHUSH_JWT_SECRET in .env}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+
+  nginx:
+    image: nginx:1.29.4-alpine
+    profiles: ["core", "full"]
+    depends_on:
+      api-1:
+        condition: service_healthy
+      api-2:
+        condition: service_healthy
+      api-3:
+        condition: service_healthy
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:${NGINX_PORT:-8081}:8081"
+    ulimits:
+      # worker_connections 20480 is a lie without a matching descriptor limit.
+      nofile:
+        soft: 65536
+        hard: 65536

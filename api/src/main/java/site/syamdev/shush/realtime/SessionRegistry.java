@@ -3,12 +3,14 @@ package site.syamdev.shush.realtime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.PingMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -17,33 +19,50 @@ import java.util.concurrent.ConcurrentHashMap;
  * a second session, not a replacement.
  *
  * <p>Node-local on purpose (aim.md 4.1): this is hot, read constantly, and inherently about
- * this process. Cross-node routing is a separate problem, solved by the Redis backplane in
- * Phase 3 rather than by externalising this map.
+ * this process. It is a routing table for the *last hop only*; deciding which node a user is on
+ * is not its job, and never becomes its job -- that is what the backplane is for.
  */
 @Component
 public class SessionRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(SessionRegistry.class);
 
-    private final Map<UUID, Set<WebSocketSession>> sessionsByUser = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<String, WebSocketSession>> sessionsByUser = new ConcurrentHashMap<>();
 
-    public void register(UUID userId, WebSocketSession session) {
-        sessionsByUser.computeIfAbsent(userId, id -> ConcurrentHashMap.newKeySet()).add(session);
-    }
-
-    public void unregister(UUID userId, WebSocketSession session) {
-        sessionsByUser.computeIfPresent(userId, (id, sessions) -> {
-            sessions.remove(session);
-            return sessions.isEmpty() ? null : sessions;
+    /** @return true if this is the user's first session on this node */
+    public boolean register(UUID userId, WebSocketSession session) {
+        boolean[] first = {false};
+        sessionsByUser.compute(userId, (id, sessions) -> {
+            if (sessions == null) {
+                first[0] = true;
+                sessions = new ConcurrentHashMap<>();
+            }
+            sessions.put(session.getId(), session);
+            return sessions;
         });
+        return first[0];
     }
 
-    public Set<WebSocketSession> sessionsOf(UUID userId) {
-        return sessionsByUser.getOrDefault(userId, Set.of());
+    /** @return true if that was the user's last session on this node */
+    public boolean unregister(UUID userId, String sessionId) {
+        boolean[] last = {false};
+        sessionsByUser.computeIfPresent(userId, (id, sessions) -> {
+            sessions.remove(sessionId);
+            if (sessions.isEmpty()) {
+                last[0] = true;
+                return null;
+            }
+            return sessions;
+        });
+        return last[0];
+    }
+
+    public Collection<WebSocketSession> sessionsOf(UUID userId) {
+        return sessionsByUser.getOrDefault(userId, Map.of()).values();
     }
 
     public int openConnectionCount() {
-        return sessionsByUser.values().stream().mapToInt(Set::size).sum();
+        return sessionsByUser.values().stream().mapToInt(Map::size).sum();
     }
 
     /** @return how many sockets actually received the payload */
@@ -54,16 +73,35 @@ public class SessionRegistry {
                 continue;
             }
             try {
-                // Spring's WebSocketSession is not safe for concurrent senders and fanout can
-                // reach one socket from several threads at once.
-                synchronized (session) {
-                    session.sendMessage(new TextMessage(payload));
-                }
+                session.sendMessage(new TextMessage(payload));
                 delivered++;
-            } catch (IOException e) {
-                log.debug("dropping frame for a session that went away: {}", session.getId());
+            } catch (IOException | IllegalStateException e) {
+                // Gone, or over its buffer limit and already being torn down. Either way the
+                // message is durable and history will hand it over when the client returns.
+                log.debug("dropping a frame for session {}: {}", session.getId(), e.getClass().getSimpleName());
             }
         }
         return delivered;
+    }
+
+    /**
+     * Application-level keepalive. nginx closes an idle proxied socket after
+     * {@code proxy_read_timeout}, and a conversation that is quiet for a minute is completely
+     * normal -- so the connection has to prove it is alive rather than rely on traffic.
+     */
+    public void pingAll() {
+        for (Map.Entry<UUID, Map<String, WebSocketSession>> entry : sessionsByUser.entrySet()) {
+            for (WebSocketSession session : List.copyOf(entry.getValue().values())) {
+                if (!session.isOpen()) {
+                    continue;
+                }
+                try {
+                    session.sendMessage(new PingMessage());
+                } catch (IOException | IllegalStateException e) {
+                    log.debug("ping failed for session {}, dropping it", session.getId());
+                    unregister(entry.getKey(), session.getId());
+                }
+            }
+        }
     }
 }

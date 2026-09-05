@@ -38,37 +38,44 @@ releases its number rather than leaving a gap. Deduplication is the
 `messages_conversation_sender_client_msg_id_key` unique constraint — a database guarantee, not
 application logic.
 
-**What proves it.** `bench/`, run against a live stack. Latest run, one node, WSL laptop:
+**What proves it.** `bench/`, run against a live stack through nginx, with clients landing on
+whichever of three replicas `least_conn` gives them:
 
 ```
 50 conversations · 200 messages each · 100 concurrent sockets · 10,000 messages
-wall clock 12.09s · 827 msg/s end to end
+nodes serving [api-1, api-2, api-3]
+wall clock 16.7–34.4s over three runs · 291–598 msg/s end to end
 no gaps in seq           ok
 identical order observed ok
 no duplicate deliveries  ok
 nothing lost             ok
 ```
 
-That number is a single-node laptop figure and is *not* the headline benchmark; Phase 8
-produces that on dedicated hardware with the load generator on a separate instance.
+`--assert-multinode` fails the run unless at least two nodes actually served it, so a
+misconfigured stack cannot pass by quietly being single-node. That flag is itself checked
+against a one-node run, where it correctly fails.
+
+These are laptop figures — three JVMs plus Postgres, Redis and Redpanda in Docker on WSL,
+with the load generator on the same machine — and the spread between runs shows it. They are
+*not* the headline benchmark; Phase 8 produces that on dedicated hardware with the load
+generator on a separate instance, which is what makes a number credible.
 
 ---
 
 ## Status
 
-Phase 2 of 8 — the ordering guarantee, proven on one node. See `docs/plan.md` §5.
+Phase 3 of 8 — the guarantee holds across three replicas behind a load balancer, with no
+sticky sessions. See `docs/plan.md` §5.
 
-The guarantee below holds and is asserted by an automated harness. What is **not** proven
-yet is that it survives *horizontal scale* and *node failure* — there is still one node,
-so cross-node fanout is untested and nothing has been killed mid-run. Those are Phases 3
-and 4, and they are the ones that make the claim worth making.
+What is **not** proven yet is that it survives *node failure*: nothing has been killed
+mid-run. That is Phase 4, and it is the one that makes the claim worth making.
 
 | Phase | What it lands | State |
 | ----- | ------------- | ----- |
 | 0 | Spike: Spring Boot 3 on virtual threads, Flyway, Testcontainers | ✅ passing |
 | 1 | Identity, domain, single-node chat | ✅ passing |
 | 2 | The ordering guarantee + harness v1 | ✅ passing |
-| 3 | Horizontal scale + harness v2 | — |
+| 3 | Horizontal scale + harness v2 | ✅ passing |
 | 4 | Chaos and correctness | — |
 | 5 | Presence, typing, receipts, unread, signup | — |
 | 6 | Matching, friends, invites, blocks | — |
@@ -107,12 +114,25 @@ Tests:
 cd api && ./mvnw clean verify
 ```
 
+Three replicas behind nginx — the configuration the guarantee is actually claimed for:
+
+```bash
+docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d --build
+curl -s localhost:8081/api/health
+```
+
 The invariant harness, against a running stack:
 
 ```bash
 cd bench && ./mvnw clean package
+
+# single node on the host
 java -jar bench/target/shush-bench.jar --mode=ordering --conversations=50 --messages=200
-# exits 0 only if all four invariants hold
+
+# through nginx, across three replicas
+java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
+     --conversations=50 --messages=200 --assert-multinode
+# exits 0 only if all four invariants hold AND at least two nodes served the run
 ```
 
 The harness has its own tests (`InvariantsTest`) that feed each check a stream violating it and
@@ -167,12 +187,30 @@ the original `seq` and deliberately **not** delivered again.
 **History.** `GET /api/conversations/{id}/messages?before=<seq>&limit=<n>` — cursored on
 `seq`, not an offset, so a page stays stable while messages keep arriving underneath.
 
+**Cross-node fanout.** A node subscribes to `user:{userId}` on Redis while it holds one of that
+user's sockets, and drops the subscription when the last one closes — so a node listens only for
+the users actually connected to it, and adding replicas does not multiply backplane traffic. The
+writer publishes every message and every `delivered` ack to the recipients' channels, whichever
+node is holding them.
+
+**Ordered delivery.** Frames for one user are written to their sockets in the order they arrived
+from the backplane, via a per-user chain of tasks on virtual threads. See the design decision
+below — this is where the one genuinely subtle bug in the project lived.
+
+**Backpressure.** Sessions are wrapped in a `ConcurrentWebSocketSessionDecorator` with a 1 MB
+buffer and a 10 s send time limit. A client that cannot drain frames fast enough has its socket
+terminated rather than buffered indefinitely; it reconnects and re-syncs from history, which is
+cheap, whereas an unbounded buffer takes every other user on that node down with it.
+
+**Heartbeat.** Every socket is pinged every 30 s, comfortably inside nginx's `proxy_read_timeout`,
+because a quiet conversation is completely normal and must not lose its connection.
+
 ### Not yet true
 
-Single node. Fanout is still a local `ConcurrentHashMap` lookup behind a `MessageDispatcher`
-interface, and there is no Redis backplane, so cross-node delivery is entirely untested — the
-`--assert-multinode` flag exists in the harness precisely so a Phase 3 run cannot silently pass
-on one node. Nothing has been killed mid-run yet either. Phases 3 and 4.
+Nothing has been killed mid-run. Graceful shutdown, consumer rebalance correctness under a
+partition move, and the chaos harness are Phase 4. There is also no reconnect-and-resume in the
+client yet, so a terminated socket currently re-syncs by refetching history rather than
+resuming from a known `seq`.
 
 ## Design decisions
 
@@ -203,6 +241,62 @@ system fails closed on `produce_failed` rather than accepting a message it canno
 central claim, and this design makes it a property of the topology (one key → one partition →
 one consumer) rather than something enforced by locking discipline that a future change could
 quietly break.
+
+### No sticky sessions, and why that is the interesting part
+
+**Chosen.** nginx balances with `least_conn` and no affinity of any kind. Any replica serves any
+user. Authentication is a stateless JWT, there is no server-side session, and a client that
+reconnects will usually land on a different node — which is fine, because nothing about a user
+lives on the node holding their socket except the socket itself.
+
+**Rejected: `ip_hash` or a sticky cookie.** This is the reflex answer to "user A is on node 1 and
+user B is on node 3", and it does make the immediate problem disappear. It also means a node
+dying takes its users' sessions with it rather than letting them reconnect anywhere; that users
+behind one corporate NAT all pin to one replica; that scaling out does not rebalance existing
+connections; and that the cross-node path is never exercised in normal operation, so it rots
+undetected. Stickiness converts a routing problem into an availability and load-distribution
+problem.
+
+**Rejected: a shared connection registry in Redis** (user → node), with nodes forwarding directly
+to each other. It works, but it adds a lookup on the delivery path, a consistency problem when
+the registry disagrees with reality after a crash, and node-to-node addressing — which is the
+thing that makes replicas non-interchangeable. Pub/sub already solves routing without anyone
+needing to know where anyone is.
+
+**Why round-robin was rejected too.** WebSocket connections are long-lived and disconnect
+unevenly. Round-robin balances at assignment time, so over a long run the distribution drifts;
+`least_conn` tracks what is actually open.
+
+**The cost, honestly.** Every message crosses Redis even when both participants are on the same
+node — an avoidable hop in the common case. That is deliberate: a same-node shortcut is an easy
+optimisation and a bad one, because the local path is the one that always works in development,
+so cross-node delivery would break silently and only surface under a load balancer. One path
+means a bug is a bug everywhere. It also makes Redis a hard dependency for delivery, though not
+for durability — messages already committed are never lost by a Redis failure, only undelivered
+until the client refetches history.
+
+### Per-user ordered delivery — a bug the harness caught
+
+The first three-replica run failed on exactly one invariant: two participants in one conversation
+out of fifty disagreed about the order of messages 165 and 166. Sequence numbers were dense and
+correct, and the database was correct — only the order in which frames reached the two sockets
+differed.
+
+The cause was that Spring's `RedisMessageListenerContainer` dispatches each received message to a
+task executor, so two frames arriving on one channel raced each other to the socket. Nothing
+about it was visible on a single node, because fanout there had been a synchronous write from the
+writer thread. It needed three replicas, a load balancer and 10,000 messages to appear once.
+
+The fix is two-part: the container now delivers on its receiving thread, preserving per-channel
+receive order, and the listener immediately hands off to a **chain of tasks per user** rather than
+a shared pool — so ordering is guaranteed within a user and nothing is promised between users,
+which is exactly what the guarantee actually claims. A striped thread pool would have been
+simpler, but one slow socket would then stall every user sharing its stripe; virtual threads make
+a chain per connected user cost almost nothing, so there is no reason to accept that.
+
+`CrossNodeFanoutIT.aBurstAcrossNodesArrivesInOneOrderOnBothSockets` is the regression test, and
+it runs in `./mvnw verify` against two real application contexts sharing one Postgres, Redis and
+broker.
 
 ## Architecture
 
@@ -257,7 +351,14 @@ for later review; each is the smallest reasonable choice, not a considered prefe
   WebSocket protocol, so a bug in a shared serialisation or ordering helper cannot cancel itself
   out across both sides.
 - **`--messages` must be even**, since it is split between the two participants.
-- **The harness reports `nodeId` if a frame carries one**, and `--assert-multinode` fails a run
-  where fewer than two nodes participated. The server does not emit `nodeId` yet; Phase 3 adds it.
+- **The server sends a `hello` frame on connect** carrying `userId` and `nodeId`. `nodeId` is
+  diagnostic only — nothing addresses a node — but without it neither an operator nor the harness
+  could tell a genuinely multi-node run from a single-node one.
+- **Backplane subscription registration is serialised behind a lock**, and the subscription
+  connection is warmed up at startup with a listener on an unused channel. Two sockets opening in
+  the same millisecond otherwise raced Spring's lazy subscription setup, and the second user was
+  silently never subscribed.
+- **nginx listens on 8081, not 8080**, so the replica stack and a host-run `spring-boot:run`
+  can be up at the same time without clashing.
 - **`spring.config.import` reads the gitignored `.env`** so `./mvnw spring-boot:run` works
   without exporting variables by hand. `.env` remains gitignored; `.env.example` stays blank.
