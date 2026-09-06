@@ -114,7 +114,10 @@ services:
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "127.0.0.1:${NGINX_PORT:-8081}:8081"
+      # Loopback by default: Docker's plain form binds 0.0.0.0 and writes straight into
+      # iptables' DOCKER chain, bypassing UFW (deploy.md 8). Set NGINX_BIND=0.0.0.0 to expose
+      # it on the LAN for testing from a phone -- deliberately, and only while you mean to.
+      - "${NGINX_BIND:-127.0.0.1}:${NGINX_PORT:-8081}:8081"
     ulimits:
       # worker_connections 20480 is a lie without a matching descriptor limit.
       nofile:

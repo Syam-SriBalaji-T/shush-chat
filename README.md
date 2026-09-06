@@ -475,6 +475,26 @@ java -jar bench/target/shush-bench.jar --mode=chaos --via=nginx \
 Both exit 0 only if every invariant held. Chaos mode leaves the replica dead; bring it back with
 `docker compose ... up -d` before the next run.
 
+### Testing it with a second person
+
+The client is served by the API, so there is no separate frontend to start. Open
+http://localhost:8081/ in one browser and a **private window or a different browser** for the
+second person — two tabs of the same browser share `localStorage`, so they are the same account
+and matching will correctly refuse to pair someone with themselves.
+
+To reach it from a phone on the same network, bind the port beyond loopback deliberately:
+
+```bash
+NGINX_BIND=0.0.0.0 docker compose -f compose.yaml -f compose.replicas.yaml \
+  --profile full up -d
+```
+
+On WSL2 in its default NAT mode that is still not enough — the port lives in the VM, not on the
+Windows host's LAN interface. Either switch WSL to mirrored networking (`networkingMode=mirrored`
+in `%USERPROFILE%\.wslconfig`, then `wsl --shutdown`), or add a port proxy from an Administrator
+PowerShell. The client derives its WebSocket URL from `location.host`, so it works from a LAN
+address unchanged.
+
 ### Development
 
 Infrastructure in Docker, the application on the host so a debugger attaches:
