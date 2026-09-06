@@ -32,11 +32,19 @@ services:
     profiles: ["core", "full"]
     # No persistence: everything Redis holds here (presence, typing, the backplane) is
     # derived state that must not outlive a restart. Losing it is correct behaviour.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --requirepass
+      - ${REDIS_PASSWORD:-shush-local-redis}
     ports:
       - "127.0.0.1:${REDIS_PORT:-56379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # --no-auth-warning keeps the password out of the container's stderr.
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a ${REDIS_PASSWORD:-shush-local-redis} ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -55,16 +63,30 @@ services:
       - --reserve-memory=0M
       - --node-id=0
       - --check=false
-      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
       - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://127.0.0.1:19092
       - --mode=dev-container
+      # SASL/SCRAM on the Kafka API, and RP_BOOTSTRAP_USER below seeds the superuser.
+      #
+      # The listeners are declared as a whole array rather than with --kafka-addr, because
+      # --kafka-addr rebuilds that array and silently discards any authentication_method set
+      # alongside it. enable_sasl on its own then leaves the listeners unauthenticated while
+      # every status check still reports healthy -- the Admin API does not go through SASL.
+      - --set
+      - >-
+        redpanda.kafka_api=[{"address":"0.0.0.0","port":9092,"name":"INTERNAL","authentication_method":"sasl"},{"address":"0.0.0.0","port":19092,"name":"EXTERNAL","authentication_method":"sasl"}]
+      - --set
+      - redpanda.enable_sasl=true
+      - --set
+      - redpanda.superusers=["${KAFKA_USER:-shush}"]
     ports:
       - "127.0.0.1:${REDPANDA_PORT:-19092}:19092"
       - "127.0.0.1:${REDPANDA_ADMIN_PORT:-19644}:9644"
+    environment:
+      RP_BOOTSTRAP_USER: "${KAFKA_USER:-shush}:${KAFKA_PASSWORD:-shush-local-kafka}:SCRAM-SHA-256"
     volumes:
       - redpanda-data:/var/lib/redpanda/data
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      test: ["CMD-SHELL", "rpk cluster health -X user=${KAFKA_USER:-shush} -X pass=${KAFKA_PASSWORD:-shush-local-kafka} -X sasl.mechanism=SCRAM-SHA-256 | grep -E 'Healthy:.+true' || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -77,7 +99,13 @@ services:
     profiles: ["search", "full"]
     environment:
       discovery.type: single-node
-      xpack.security.enabled: "false"
+      # Authentication on, TLS off. TLS between a container and the app on the same Docker
+      # network buys little and costs certificate management; authentication stops anything
+      # else that reaches the port. A real deployment turns both on.
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      ELASTIC_PASSWORD: ${ELASTICSEARCH_PASSWORD:-shush-local-elastic}
       # Held down hard: this is a single-node index over a few hundred tag documents, not a
       # cluster. The default heap would be several times the rest of the stack combined.
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
@@ -86,7 +114,7 @@ services:
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      test: ["CMD-SHELL", "curl -fs -u elastic:${ELASTICSEARCH_PASSWORD:-shush-local-elastic} http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 10s
       timeout: 10s
       retries: 30
@@ -100,7 +128,8 @@ services:
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shushadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shushadmin}
+      # MinIO refuses to start on a root password shorter than 8 characters.
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shush-local-minio}
     ports:
       - "127.0.0.1:${MINIO_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"

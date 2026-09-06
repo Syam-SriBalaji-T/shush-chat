@@ -38,12 +38,17 @@ spring:
     redis:
       host: ${SHUSH_REDIS_HOST:localhost}
       port: ${SHUSH_REDIS_PORT:56379}
+      # Blank by default so the Testcontainers Redis, which has no password, still works --
+      # a ServiceConnection supplies its own credentials and overrides these entirely.
+      password: ${SHUSH_REDIS_PASSWORD:}
     elasticsearch:
       repositories:
         enabled: false
 
   elasticsearch:
     uris: ${SHUSH_ELASTICSEARCH_URIS:http://localhost:9200}
+    username: ${SHUSH_ELASTICSEARCH_USER:}
+    password: ${SHUSH_ELASTICSEARCH_PASSWORD:}
     connection-timeout: 2s
     socket-timeout: 5s
 
@@ -122,6 +127,11 @@ shush:
   # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown
   # to have genuinely spanned nodes.
   node-id: ${SHUSH_NODE_ID:}
+  kafka-auth:
+    # Empty means no authentication, which is what the Testcontainers broker wants. When a
+    # username is set, KafkaAuthConfig adds SASL/SCRAM to both the producer and the consumer.
+    username: ${SHUSH_KAFKA_USER:}
+    password: ${SHUSH_KAFKA_PASSWORD:}
   presence:
     # Renewed every 15s and expiring after 45s: two missed ticks before anyone is marked away,
     # so a GC pause does not flicker someone offline, and a dead node self-corrects in under a

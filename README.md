@@ -425,9 +425,12 @@ meanwhile; leaving a conversation or being blocked does not invalidate one alrea
 **Sign-out deletes the device token rather than revoking the JWT**, which stays valid for up to 24 h.
 Revocation would need a denylist and a lookup on every request.
 
-**No authentication on the Redis, Kafka or object-storage connections.** Reachable only on the
-compose network and bound to loopback on the host. Appropriate for a local stack, not for a
-deployment.
+**Authentication everywhere, but no transport encryption.** Postgres (SCRAM), Redis
+(`requirepass`), Redpanda (SASL/SCRAM-SHA-256), Elasticsearch (native realm), MinIO and Grafana
+all require credentials. None of it is over TLS — inside a Docker network that is a reasonable
+trade, across a real one it is not, and a deployment would use SASL_SSL and HTTPS with the same
+credentials. Credentials also live in a `.env` file, which is a local-development convenience,
+never a production secret store.
 
 ---
 
@@ -494,6 +497,31 @@ Windows host's LAN interface. Either switch WSL to mirrored networking (`network
 in `%USERPROFILE%\.wslconfig`, then `wsl --shutdown`), or add a port proxy from an Administrator
 PowerShell. The client derives its WebSocket URL from `location.host`, so it works from a LAN
 address unchanged.
+
+### Credentials
+
+Every service requires a password. Defaults live in `compose.yaml` so a clean clone still runs
+with one command; `.env` overrides them on your machine. `.env.example` is the committed key list.
+
+```bash
+cp .env.example .env      # then fill it in, or leave it out entirely and use the defaults
+```
+
+Two things that will catch you out:
+
+- **Postgres and Elasticsearch only read their password when the volume is first created.**
+  Changing it later does nothing to an existing volume. Change it in place instead of wiping
+  your data:
+  ```bash
+  docker compose -f compose.yaml exec postgres \
+    psql -U shush -d shush -c "ALTER USER shush PASSWORD 'new-password'"
+  ```
+- **Redpanda seeds its SASL superuser only on a fresh cluster.** On a pre-existing volume, create
+  it once:
+  ```bash
+  docker compose -f compose.yaml exec redpanda \
+    rpk security user create shush -p 'your-password' --mechanism SCRAM-SHA-256
+  ```
 
 ### Development
 

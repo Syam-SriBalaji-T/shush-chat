@@ -33,8 +33,16 @@ services:
       SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
+      SHUSH_REDIS_PASSWORD: ${REDIS_PASSWORD:-shush-local-redis}
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_KAFKA_USER: ${KAFKA_USER:-shush}
+      SHUSH_KAFKA_PASSWORD: ${KAFKA_PASSWORD:-shush-local-kafka}
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_ELASTICSEARCH_USER: elastic
+      SHUSH_ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-shush-local-elastic}
+      SHUSH_S3_ENDPOINT: http://minio:9000
+      SHUSH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-shushadmin}
+      SHUSH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-shush-local-minio}
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # Replicas run infrastructure they did not start; they must never try to manage it.
@@ -72,8 +80,16 @@ services:
       SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
+      SHUSH_REDIS_PASSWORD: ${REDIS_PASSWORD:-shush-local-redis}
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_KAFKA_USER: ${KAFKA_USER:-shush}
+      SHUSH_KAFKA_PASSWORD: ${KAFKA_PASSWORD:-shush-local-kafka}
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_ELASTICSEARCH_USER: elastic
+      SHUSH_ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-shush-local-elastic}
+      SHUSH_S3_ENDPOINT: http://minio:9000
+      SHUSH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-shushadmin}
+      SHUSH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-shush-local-minio}
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
@@ -91,8 +107,16 @@ services:
       SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
       SHUSH_REDIS_HOST: redis
       SHUSH_REDIS_PORT: 6379
+      SHUSH_REDIS_PASSWORD: ${REDIS_PASSWORD:-shush-local-redis}
       SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_KAFKA_USER: ${KAFKA_USER:-shush}
+      SHUSH_KAFKA_PASSWORD: ${KAFKA_PASSWORD:-shush-local-kafka}
       SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_ELASTICSEARCH_USER: elastic
+      SHUSH_ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-shush-local-elastic}
+      SHUSH_S3_ENDPOINT: http://minio:9000
+      SHUSH_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-shushadmin}
+      SHUSH_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-shush-local-minio}
       SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
       SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
       # 12 partitions shared by three replicas: four listener threads each. Leaving it at the

@@ -3,13 +3,27 @@ spring:
     compose:
       enabled: false
 
+  # The developer's .env is imported by application.yml and would otherwise leak real
+  # credentials into the test run -- switching SASL on against a Testcontainers broker that has
+  # no authentication at all. Every container here is unauthenticated by construction, so these
+  # are blanked explicitly rather than left to whatever happens to be on the machine.
+  data:
+    redis:
+      password: ""
+  elasticsearch:
+    username: ""
+    password: ""
+
 shush:
   jwt:
     secret: test-secret-that-is-long-enough-for-hs256
   dev-endpoints:
     enabled: true
-  # Shortened so expiry is a thing tests can actually observe rather than assume. The
-  # behaviour under test is that these keys expire on their own, not the exact duration.
+  kafka-auth:
+    username: ""
+    password: ""
+  # Shortened so expiry is a thing tests can actually observe rather than assume. The behaviour
+  # under test is that these keys expire on their own, not the exact duration.
   presence:
     ttl: 2s
     heartbeat: 1s
@@ -32,7 +46,5 @@ shush:
     # how long two HTTP calls happen to take.
     shuffle-interval: 30s
   storage:
-    # Filled in from the MinIO container at runtime; these are the container's own defaults.
-    access-key: minioadmin
-    secret-key: minioadmin
+    # Endpoint and credentials come from the MinIO container via MinioProperties.
     bucket: shush-media-test

@@ -44,6 +44,10 @@ class CrossNodeFanoutIT extends AbstractIT {
         // properties, which application.yml then overrides -- so the node would have come up on
         // the configured port against the developer's local database rather than the container.
         secondNode = new SpringApplicationBuilder(ShushApplication.class).run(
+                // The same profile the first node runs under. Without it this node reads the
+                // developer's .env and tries to authenticate to containers that have no
+                // authentication -- which shows up as cross-node delivery silently failing.
+                "--spring.profiles.active=test",
                 "--server.port=0",
                 "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
                 "--spring.datasource.username=" + POSTGRES.getUsername(),
