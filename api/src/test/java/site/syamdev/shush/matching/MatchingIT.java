@@ -1,0 +1,152 @@
+package site.syamdev.shush.matching;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import site.syamdev.shush.conversation.Conversation;
+import site.syamdev.shush.conversation.ConversationRepository;
+import site.syamdev.shush.support.AbstractIT;
+import site.syamdev.shush.support.TestUsers;
+import site.syamdev.shush.support.WsClient;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class MatchingIT extends AbstractIT {
+
+    private static final short MUSIC = 1;
+    private static final short GAMING = 2;
+    private static final short GARDENING = 24;
+
+    @LocalServerPort
+    private int port;
+
+    @Autowired
+    private ConversationRepository conversations;
+
+    @Autowired
+    private WaitPool pool;
+
+    @Test
+    void twoUsersWithOverlappingInterestsAreMatchedOnThoseInterests() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+
+        try (WsClient aliceWs = WsClient.connect(port, alice.jwt());
+             WsClient bobWs = WsClient.connect(port, bob.jwt())) {
+            aliceWs.await("hello");
+            bobWs.await("hello");
+
+            find(aliceWs, List.of(MUSIC, GAMING), 0);
+            find(bobWs, List.of(GAMING, GARDENING), 0);
+
+            JsonNode asAlice = aliceWs.await("matched");
+            JsonNode asBob = bobWs.await("matched");
+
+            assertThat(asAlice.path("conversationId").asText())
+                    .isEqualTo(asBob.path("conversationId").asText());
+            assertThat(asAlice.path("withUserId").asText()).isEqualTo(bob.userId().toString());
+            assertThat(asBob.path("withUserId").asText()).isEqualTo(alice.userId().toString());
+
+            assertThat(asAlice.path("randomMatch").asBoolean())
+                    .as("they share an interest, so this is not a random match")
+                    .isFalse();
+            assertThat(asAlice.path("sharedInterestIds").get(0).asInt()).isEqualTo(GAMING);
+
+            Conversation conversation = conversations
+                    .findById(UUID.fromString(asAlice.path("conversationId").asText())).orElseThrow();
+            assertThat(conversation.getMatchedOn()).containsExactly(GAMING);
+            assertThat(conversation.wasRandomMatch()).isFalse();
+        }
+    }
+
+    /**
+     * The five-second option is honest about what it is: try for a shared interest, then give
+     * me anyone. When Shush is quiet that means a random person, and the conversation says so.
+     */
+    @Test
+    void whenPatienceRunsOutTheMatchIsRandomAndSaysSo() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+
+        try (WsClient aliceWs = WsClient.connect(port, alice.jwt());
+             WsClient bobWs = WsClient.connect(port, bob.jwt())) {
+            aliceWs.await("hello");
+            bobWs.await("hello");
+
+            // Nothing in common at all, so only patience can pair them.
+            find(aliceWs, List.of(MUSIC), 5);
+            find(bobWs, List.of(GARDENING), 5);
+
+            JsonNode asAlice = aliceWs.await("matched");
+            JsonNode asBob = bobWs.await("matched");
+
+            assertThat(asAlice.path("conversationId").asText())
+                    .isEqualTo(asBob.path("conversationId").asText());
+            assertThat(asAlice.path("randomMatch").asBoolean()).isTrue();
+            assertThat(asAlice.path("sharedInterestIds").isNull()).isTrue();
+
+            Conversation conversation = conversations
+                    .findById(UUID.fromString(asAlice.path("conversationId").asText())).orElseThrow();
+            assertThat(conversation.getMatchedOn())
+                    .as("matched_on is null for a random match, and the null is meaningful")
+                    .isNull();
+        }
+    }
+
+    /**
+     * Zero patience means "only somebody who actually shares an interest, however long that
+     * takes" -- so with nothing in common, nothing should happen at all.
+     */
+    @Test
+    void waitingIndefinitelyNeverSettlesForARandomMatch() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+
+        try (WsClient aliceWs = WsClient.connect(port, alice.jwt());
+             WsClient bobWs = WsClient.connect(port, bob.jwt())) {
+            aliceWs.await("hello");
+            bobWs.await("hello");
+
+            find(aliceWs, List.of(MUSIC), 0);
+            find(bobWs, List.of(GARDENING), 0);
+
+            org.awaitility.Awaitility.await()
+                    .during(java.time.Duration.ofSeconds(3))
+                    .atMost(java.time.Duration.ofSeconds(4))
+                    .untilAsserted(() -> {
+                        assertThat(pool.isWaiting(alice.userId())).isTrue();
+                        assertThat(pool.isWaiting(bob.userId())).isTrue();
+                    });
+
+            aliceWs.send("{\"type\":\"cancelFind\"}");
+            bobWs.send("{\"type\":\"cancelFind\"}");
+        }
+    }
+
+    @Test
+    void closingTheSocketTakesYouOutOfThePool() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+
+        try (WsClient aliceWs = WsClient.connect(port, alice.jwt())) {
+            aliceWs.await("hello");
+            find(aliceWs, List.of(MUSIC), 0);
+
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                    .untilAsserted(() -> assertThat(pool.isWaiting(alice.userId())).isTrue());
+        }
+
+        // Matching someone who has closed the tab would burn a waiting stranger on a
+        // conversation nobody is there to have.
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(pool.isWaiting(alice.userId())).isFalse());
+    }
+
+    private static void find(WsClient client, List<Short> interestIds, int patience) throws Exception {
+        String ids = interestIds.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("");
+        client.send("{\"type\":\"find\",\"interestIds\":[" + ids + "],\"patience\":" + patience + "}");
+    }
+}

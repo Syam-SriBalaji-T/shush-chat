@@ -1,0 +1,190 @@
+spring:
+  application:
+    name: shush-api
+
+  # Lets `./mvnw spring-boot:run` pick up the gitignored .env the same file docker compose
+  # reads, so secrets stay out of the repo without having to be exported by hand.
+  config:
+    import: optional:file:../.env[.properties]
+
+  # Locked decision (aim.md 4.1): MVC on virtual threads, not WebFlux.
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: ${SHUSH_DB_URL:jdbc:postgresql://localhost:55432/shush}
+    username: ${SHUSH_DB_USER:shush}
+    password: ${SHUSH_DB_PASSWORD:shush}
+    hikari:
+      # One partition's writer thread can be mid-transaction on every listener thread at once,
+      # and web requests still need connections. The default 10 starves them against 12
+      # consumers. Three replicas at 16 stays well inside Postgres's default max_connections.
+      maximum-pool-size: ${SHUSH_DB_POOL:16}
+
+  jpa:
+    # Flyway owns the schema; Hibernate only checks the entities agree with it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${SHUSH_REDIS_HOST:localhost}
+      port: ${SHUSH_REDIS_PORT:56379}
+    elasticsearch:
+      repositories:
+        enabled: false
+
+  elasticsearch:
+    uris: ${SHUSH_ELASTICSEARCH_URIS:http://localhost:9200}
+    connection-timeout: 2s
+    socket-timeout: 5s
+
+  kafka:
+    bootstrap-servers: ${SHUSH_KAFKA_BOOTSTRAP:localhost:19092}
+    producer:
+      # acks=all plus idempotence is what makes ordering survive a retry. Without idempotence
+      # a retried send can land behind a batch that was already in flight, silently undoing
+      # the guarantee the partition key was chosen to provide.
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: chat-writer
+      auto-offset-reset: earliest
+      # Offsets are committed by the container after the listener returns, so a crash
+      # mid-write redelivers rather than loses. The dedup constraint absorbs the redelivery.
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: site.syamdev.shush.message
+        spring.json.value.default.type: site.syamdev.shush.message.ChatMessageEvent
+        # A killed node leaves without saying goodbye, so its partitions are stranded until the
+        # group notices. The 45s default is a long time for a chat service to stop writing one
+        # twelfth of its conversations. The cost of 10s is more spurious rebalances -- a long GC
+        # pause can now evict a healthy consumer -- which the dedup constraint makes survivable.
+        session.timeout.ms: 10000
+        heartbeat.interval.ms: 3000
+    listener:
+      ack-mode: record
+      # One listener thread per partition: a conversation is handled by exactly one thread,
+      # which is the in-process half of the ordering guarantee.
+      concurrency: ${SHUSH_KAFKA_CONCURRENCY:12}
+
+  docker:
+    compose:
+      file: ../compose.yaml
+      profiles:
+        active: core
+      # Leave infrastructure running between app restarts.
+      lifecycle-management: start-only
+
+server:
+  port: ${SHUSH_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          # No dependency checks. Liveness answers "is this process still serving?", and a
+          # probe that does I/O will time out under exactly the load where killing a healthy
+          # node is most damaging.
+          include: livenessState
+        readiness:
+          # Kafka is deliberately absent. A broker blip must not mark every replica unready and
+          # take the whole service out: history, auth and existing sockets all keep working, and
+          # a failed produce is already reported to the client as produce_failed.
+          # Kafka and Elasticsearch are deliberately absent. A broker blip must not mark every
+          # replica unready and take the whole service out, and a search outage costs matching
+          # only -- chat, history and auth all keep working.
+          include: readinessState, db, redis
+
+shush:
+  # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown
+  # to have genuinely spanned nodes.
+  node-id: ${SHUSH_NODE_ID:}
+  presence:
+    # Renewed every 15s and expiring after 45s: two missed ticks before anyone is marked away,
+    # so a GC pause does not flicker someone offline, and a dead node self-corrects in under a
+    # minute without any cleanup job.
+    ttl: 45s
+    heartbeat: 15s
+  typing:
+    ttl: 5s
+    throttle: 3s
+  name:
+    # One shuffle a second. Nobody tapping a button notices; it stops a script draining the pool.
+    shuffle-interval: 1s
+  conversation:
+    # A stranger conversation nobody asked to keep does not survive its ending.
+    purge-after-ending: 1h
+  social:
+    friend-request-ttl: 7d
+    invite-ttl: 7d
+  matching:
+    # Retried often enough that a five-second patience window has plenty of chances, and cheaply
+    # enough that it costs nothing: each node only ticks for the users it is holding.
+    tick: 500ms
+  storage:
+    endpoint: ${SHUSH_S3_ENDPOINT:http://localhost:9000}
+    region: ${SHUSH_S3_REGION:us-east-1}
+    bucket: ${SHUSH_S3_BUCKET:shush-media}
+    access-key: ${SHUSH_S3_ACCESS_KEY:shushadmin}
+    secret-key: ${SHUSH_S3_SECRET_KEY:shushadmin}
+    # A presigned URL is a bearer credential for one key. Five minutes is plenty for an upload
+    # and short enough that a leaked one is not an open write endpoint.
+    upload-url-ttl: 5m
+    max-bytes: 5242880
+    anonymous-retention: 24h
+    saved-retention: 30d
+  retention:
+    anonymous-user: 30d
+    unconfirmed-media: 1h
+  scheduler:
+    # Longer than any sweep should take, short enough that a node dying mid-job does not hold
+    # its lock for long. Skipped ticks are fine; these are periodic sweeps, not queued work.
+    lease: 5m
+    purge-conversations: 5m
+    expire-friend-requests: 15m
+    purge-media: 1h
+    purge-anonymous-users: 24h
+    reconcile-unread: 24h
+  websocket:
+    heartbeat: 30s
+    send-time-limit-millis: 10000
+    # 1 MB of undrained frames means the client is not keeping up. Terminate rather than buffer.
+    buffer-size-limit-bytes: 1048576
+  kafka:
+    chat-topic: chat.messages
+    partitions: 12
+  jwt:
+    # No default. A deployment without this fails to start rather than signing tokens with
+    # a value anyone reading this repository already knows.
+    secret: ${SHUSH_JWT_SECRET}
+    ttl: 24h
+  dev-endpoints:
+    # Conversation creation without matching. Phase 6 removes the need for it.
+    enabled: ${SHUSH_DEV_ENDPOINTS:false}
+
+logging:
+  level:
+    root: info

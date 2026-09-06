@@ -1,0 +1,38 @@
+spring:
+  docker:
+    compose:
+      enabled: false
+
+shush:
+  jwt:
+    secret: test-secret-that-is-long-enough-for-hs256
+  dev-endpoints:
+    enabled: true
+  # Shortened so expiry is a thing tests can actually observe rather than assume. The
+  # behaviour under test is that these keys expire on their own, not the exact duration.
+  presence:
+    ttl: 2s
+    heartbeat: 1s
+  typing:
+    ttl: 1s
+    throttle: 1s
+  # Scheduled sweeps are driven explicitly in tests. Leaving them on a timer would make results
+  # depend on whether a tick happened to fire mid-assertion.
+  scheduler:
+    purge-conversations: 1h
+    expire-friend-requests: 1h
+    purge-media: 1h
+    purge-anonymous-users: 24h
+    reconcile-unread: 24h
+  matching:
+    tick: 200ms
+  name:
+    # Widened from the production 1s: the behaviour under test is that a second shuffle inside
+    # the window is refused, not the exact duration, and a one-second window is a race against
+    # how long two HTTP calls happen to take.
+    shuffle-interval: 30s
+  storage:
+    # Filled in from the MinIO container at runtime; these are the container's own defaults.
+    access-key: minioadmin
+    secret-key: minioadmin
+    bucket: shush-media-test

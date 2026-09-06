@@ -1,0 +1,51 @@
+=== ordering run 1 ===
+all 10000 frames written in PT0.428316107S; waiting for delivery
+
+---------------------------------------------
+messages        10000
+wall clock      34.59s
+throughput      289 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+---------------------------------------------
+no gaps in seq            ok
+identical order observed  ok
+no duplicate deliveries   ok
+nothing lost              ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+
+=== ordering run 2 ===
+all 10000 frames written in PT0.488711478S; waiting for delivery
+
+---------------------------------------------
+messages        10000
+wall clock      22.27s
+throughput      449 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+---------------------------------------------
+no gaps in seq            ok
+identical order observed  ok
+no duplicate deliveries   ok
+nothing lost              ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+
+=== ordering run 3 ===
+all 10000 frames written in PT0.429984189S; waiting for delivery
+
+---------------------------------------------
+messages        10000
+wall clock      17.77s
+throughput      563 msg/s end to end
+nodes serving   [api-2, api-1, api-3]
+---------------------------------------------
+no gaps in seq            ok
+identical order observed  ok
+no duplicate deliveries   ok
+nothing lost              ok
+---------------------------------------------
+PASS - every invariant held
+exit=0
+

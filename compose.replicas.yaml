@@ -1,0 +1,125 @@
+# Overlay: three application replicas behind nginx.
+#
+# SHUSH_JWT_SECRET has an obviously-fake default here and nowhere else. The application itself
+# has none, so a real deployment fails to start rather than signing tokens with a value anyone
+# reading this repository already knows -- but a reviewer cloning this and running one command
+# must not be stopped by a secret they have no way to guess. Set it in .env for anything real.
+#
+#   docker compose -f compose.yaml -f compose.replicas.yaml --profile core up -d --build
+#
+# Three replicas from day one is not decoration (aim.md R4). Cross-node fanout is the problem
+# the whole backplane exists to solve, and it simply does not occur on one node -- so a
+# single-node stack would let it be broken without anything noticing.
+
+services:
+  api-1: &api
+    build:
+      # The repo root, not api/, because the image also carries the test client from web/.
+      context: .
+      dockerfile: api/Dockerfile
+    image: shush-api:local
+    profiles: ["core", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      SHUSH_NODE_ID: api-1
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      # Replicas run infrastructure they did not start; they must never try to manage it.
+      # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
+      # single-node default of 12 gives the group 36 members for 12 partitions -- 24 of them
+      # idle, and every rebalance after a node dies has to shuffle all 36.
+      SHUSH_KAFKA_CONCURRENCY: "4"
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+    # A memory limit is mandatory, not tuning. MaxRAMPercentage is a percentage of what the
+    # *container* is allowed, and with no limit that is the whole host -- so three replicas each
+    # sized themselves for the entire machine, the box went into swap, and the broker started
+    # stalling its reactor for hundreds of milliseconds. The symptom looked like message loss.
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    # No published port. The only way in is nginx, which is the point.
+    expose:
+      - "8080"
+    healthcheck:
+      # Liveness, not readiness: this gates container startup ordering, and it must not fail
+      # because a datastore is briefly slow.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health | grep -q UP"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  api-2:
+    <<: *api
+    environment:
+      SHUSH_NODE_ID: api-2
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
+      # single-node default of 12 gives the group 36 members for 12 partitions -- 24 of them
+      # idle, and every rebalance after a node dies has to shuffle all 36.
+      SHUSH_KAFKA_CONCURRENCY: "4"
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+
+  api-3:
+    <<: *api
+    environment:
+      SHUSH_NODE_ID: api-3
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shush}
+      SHUSH_DB_USER: ${POSTGRES_USER:-shush}
+      SHUSH_DB_PASSWORD: ${POSTGRES_PASSWORD:-shush}
+      SHUSH_REDIS_HOST: redis
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET:-local-development-only-not-a-secret-0000}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      # 12 partitions shared by three replicas: four listener threads each. Leaving it at the
+      # single-node default of 12 gives the group 36 members for 12 partitions -- 24 of them
+      # idle, and every rebalance after a node dies has to shuffle all 36.
+      SHUSH_KAFKA_CONCURRENCY: "4"
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+
+  nginx:
+    image: nginx:1.29.4-alpine
+    profiles: ["core", "full"]
+    depends_on:
+      api-1:
+        condition: service_healthy
+      api-2:
+        condition: service_healthy
+      api-3:
+        condition: service_healthy
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # Loopback by default: Docker's plain form binds 0.0.0.0 and writes straight into
+      # iptables' DOCKER chain, bypassing UFW (deploy.md 8). Set NGINX_BIND=0.0.0.0 to expose
+      # it on the LAN for testing from a phone -- deliberately, and only while you mean to.
+      - "${NGINX_BIND:-127.0.0.1}:${NGINX_PORT:-8081}:8081"
+    ulimits:
+      # worker_connections 20480 is a lie without a matching descriptor limit.
+      nofile:
+        soft: 65536
+        hard: 65536

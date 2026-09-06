@@ -1,0 +1,32 @@
+-- The controlled vocabulary matching runs on (aim.md 4.3: lexical, not semantic -- which is
+-- why an inverted index beats embeddings here). Popularity seeds the five default tiles and
+-- is maintained from real selections thereafter.
+insert into interests (id, slug, label, popularity) values
+    (1,  'music',        'Music',            100),
+    (2,  'gaming',       'Gaming',            95),
+    (3,  'movies',       'Movies & TV',       90),
+    (4,  'books',        'Books',             85),
+    (5,  'food',         'Food & Cooking',    80),
+    (6,  'travel',       'Travel',            75),
+    (7,  'sport',        'Sport',             70),
+    (8,  'art',          'Art & Design',      65),
+    (9,  'tech',         'Tech',              60),
+    (10, 'science',      'Science',           55),
+    (11, 'photography',  'Photography',       50),
+    (12, 'fitness',      'Fitness',           45),
+    (13, 'nature',       'Nature & Hiking',   40),
+    (14, 'animals',      'Animals',           38),
+    (15, 'history',      'History',           36),
+    (16, 'anime',        'Anime & Manga',     34),
+    (17, 'fashion',      'Fashion',           32),
+    (18, 'languages',    'Languages',         30),
+    (19, 'diy',          'DIY & Making',      28),
+    (20, 'cars',         'Cars & Bikes',      26),
+    (21, 'space',        'Space',             24),
+    (22, 'comedy',       'Comedy',            22),
+    (23, 'boardgames',   'Board Games',       20),
+    (24, 'gardening',    'Gardening',         18),
+    (25, 'philosophy',   'Philosophy',        16),
+    (26, 'podcasts',     'Podcasts',          14),
+    (27, 'coffee',       'Coffee & Tea',      12),
+    (28, 'volunteering', 'Volunteering',      10);
