@@ -32,20 +32,27 @@ import java.util.UUID;
 @Component
 public class WaitingIndex {
 
-    static final String INDEX = "waiting";
-
     private static final Logger log = LoggerFactory.getLogger(WaitingIndex.class);
 
     private final ElasticsearchClient elasticsearch;
 
-    WaitingIndex(ElasticsearchClient elasticsearch) {
+    /**
+     * Configurable so a shared cluster can prefix it per tenant. On a shared Elasticsearch the
+     * app's role only grants access to its own prefix, so a hardcoded name would either be
+     * unreachable or force every tenant to share one index.
+     */
+    private final String index;
+
+    WaitingIndex(ElasticsearchClient elasticsearch,
+                 @org.springframework.beans.factory.annotation.Value("${shush.search.waiting-index}") String index) {
         this.elasticsearch = elasticsearch;
+        this.index = index;
     }
 
     public void index(WaitingUser waiting) throws IOException {
         ensureIndexExists();
         elasticsearch.index(request -> request
-                .index(INDEX)
+                .index(index)
                 .id(waiting.userId().toString())
                 // Visible to the very next search rather than after the default one-second
                 // refresh: two people arriving together must be able to find each other, and a
@@ -60,7 +67,7 @@ public class WaitingIndex {
     public void remove(UUID userId) {
         try {
             elasticsearch.delete(request -> request
-                    .index(INDEX)
+                    .index(index)
                     .id(userId.toString())
                     .refresh(co.elastic.clients.elasticsearch._types.Refresh.True));
         } catch (IOException | RuntimeException e) {
@@ -84,7 +91,7 @@ public class WaitingIndex {
                 .toList();
 
         SearchResponse<WaitingDocument> response = elasticsearch.search(request -> request
-                .index(INDEX)
+                .index(index)
                 .size(1)
                 .query(query -> query.bool(bool -> bool
                         // Scored, not filtered: more shared tags is a better match, and that
@@ -122,12 +129,12 @@ public class WaitingIndex {
      * chat when search is unavailable. Matching is the only thing that needs it.
      */
     private void ensureIndexExists() throws IOException {
-        if (elasticsearch.indices().exists(request -> request.index(INDEX)).value()) {
+        if (elasticsearch.indices().exists(request -> request.index(index)).value()) {
             return;
         }
         try {
             elasticsearch.indices().create(request -> request
-                    .index(INDEX)
+                    .index(index)
                     .mappings(mappings -> mappings
                             .properties("userId", property -> property.keyword(keyword -> keyword))
                             .properties("interestIds", property -> property.keyword(keyword -> keyword))

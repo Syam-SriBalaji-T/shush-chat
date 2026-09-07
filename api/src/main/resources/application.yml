@@ -184,8 +184,13 @@ shush:
     # 1 MB of undrained frames means the client is not keeping up. Terminate rather than buffer.
     buffer-size-limit-bytes: 1048576
   kafka:
-    chat-topic: chat.messages
+    # Names are configurable so a shared broker can scope them per tenant: on the platform
+    # these become shush.chat.messages and shush.chat-writer, which is what the ACLs allow.
+    chat-topic: ${SHUSH_KAFKA_TOPIC:chat.messages}
+    consumer-group: ${SHUSH_KAFKA_GROUP:chat-writer}
     partitions: 12
+  search:
+    waiting-index: ${SHUSH_SEARCH_INDEX:waiting}
   jwt:
     # No default. A deployment without this fails to start rather than signing tokens with
     # a value anyone reading this repository already knows.

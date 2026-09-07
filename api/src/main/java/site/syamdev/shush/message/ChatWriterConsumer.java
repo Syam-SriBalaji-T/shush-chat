@@ -46,7 +46,7 @@ class ChatWriterConsumer {
                 .register(meters);
     }
 
-    @KafkaListener(topics = "${shush.kafka.chat-topic}", groupId = "chat-writer")
+    @KafkaListener(topics = "${shush.kafka.chat-topic}", groupId = "${shush.kafka.consumer-group}")
     void onMessage(ChatMessageEvent event) {
         // Ask storage, not the client. A message referencing a key whose bytes were never
         // uploaded would reach every recipient as a picture that is not there, and the check

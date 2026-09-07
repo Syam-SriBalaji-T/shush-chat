@@ -1,0 +1,126 @@
+# Shush on the shared syamdev platform.
+#
+#   docker compose --env-file ../secrets.env -f compose.platform.yaml up -d --build
+#
+# This file has NO infrastructure of its own -- Postgres, Redis, Redpanda, Elasticsearch, MinIO
+# and nginx all live in syamdev-platform. It brings up the three stateless replicas and joins
+# them to the shared networks.
+#
+# compose.yaml and compose.replicas.yaml still exist and still work standalone. That is not
+# duplication: a reviewer must be able to clone this repo and run everything with one command
+# without knowing the platform exists (aim.md R7), and a deployment must be able to share
+# infrastructure with other apps. Those are different jobs, so they are different files.
+#
+# Requires: syamdev-platform/bootstrap.sh has been run, and the data, streaming and search
+# stacks are up.
+
+name: shush
+
+services:
+  api-1: &api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: shush-api:local
+    restart: unless-stopped
+    environment: &api-env
+      SHUSH_NODE_ID: api-1
+
+      # Shared Postgres, this app's own database. The credentials cannot open any other
+      # tenant's database -- PUBLIC's CONNECT right is revoked during provisioning.
+      SHUSH_DB_URL: jdbc:postgresql://postgres:5432/${SHUSH_DB_NAME}
+      SHUSH_DB_USER: ${SHUSH_DB_USER}
+      SHUSH_DB_PASSWORD: ${SHUSH_DB_PASSWORD}
+
+      # This app's own Redis instance. Isolation at ~9 MB is cheaper than shared-key discipline.
+      SHUSH_REDIS_HOST: redis-shush
+      SHUSH_REDIS_PORT: 6379
+      SHUSH_REDIS_PASSWORD: ${SHUSH_REDIS_PASSWORD}
+
+      # Shared broker. The topic and group are prefixed because the ACLs only allow shush.*
+      SHUSH_KAFKA_BOOTSTRAP: redpanda:9092
+      SHUSH_KAFKA_USER: ${SHUSH_KAFKA_USER}
+      SHUSH_KAFKA_PASSWORD: ${SHUSH_KAFKA_PASSWORD}
+      SHUSH_KAFKA_TOPIC: shush.chat.messages
+      SHUSH_KAFKA_GROUP: shush.chat-writer
+      # 12 partitions across three replicas.
+      SHUSH_KAFKA_CONCURRENCY: "4"
+
+      # Shared cluster, index prefixed to match the role.
+      SHUSH_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      SHUSH_ELASTICSEARCH_USER: ${SHUSH_ES_USER}
+      SHUSH_ELASTICSEARCH_PASSWORD: ${SHUSH_ES_PASSWORD}
+      SHUSH_SEARCH_INDEX: shush-waiting
+
+      # Shared MinIO, this app's own bucket and a key scoped to it.
+      SHUSH_S3_ENDPOINT: http://minio:9000
+      SHUSH_S3_BUCKET: shush-media
+      SHUSH_S3_ACCESS_KEY: ${SHUSH_S3_ACCESS_KEY}
+      SHUSH_S3_SECRET_KEY: ${SHUSH_S3_SECRET_KEY}
+
+      SHUSH_JWT_SECRET: ${SHUSH_JWT_SECRET}
+      SHUSH_DEV_ENDPOINTS: ${SHUSH_DEV_ENDPOINTS:-false}
+      # This stack manages no infrastructure of its own.
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+    labels: &api-labels
+      # How Prometheus finds this. The observability repo never needs to know we exist.
+      metrics.scrape: "true"
+      metrics.path: "/actuator/prometheus"
+      metrics.port: "8080"
+      metrics.job: "shush"
+    # Explicit, namespaced aliases. On a SHARED network a service named "api-1" would claim
+    # that DNS name for the whole box, and the next app with an api-1 would collide with it.
+    # Every name a tenant publishes onto a shared network carries its prefix.
+    networks:
+      edge:
+        aliases: [shush-api-1]
+      data:
+        aliases: [shush-api-1]
+    # No published port: the only way in is the shared nginx.
+    expose: ["8080"]
+    deploy:
+      resources:
+        limits:
+          # MaxRAMPercentage is a share of the CONTAINER's limit. With none set that is the
+          # whole host, and three replicas each size themselves for the entire machine.
+          memory: 1024M
+    healthcheck:
+      # Liveness, not readiness: this gates startup ordering and must not fail because a
+      # datastore is briefly slow.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health | grep -q UP"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  api-2:
+    <<: *api
+    environment:
+      <<: *api-env
+      SHUSH_NODE_ID: api-2
+    labels: *api-labels
+    networks:
+      edge:
+        aliases: [shush-api-2]
+      data:
+        aliases: [shush-api-2]
+
+  api-3:
+    <<: *api
+    environment:
+      <<: *api-env
+      SHUSH_NODE_ID: api-3
+    labels: *api-labels
+    networks:
+      edge:
+        aliases: [shush-api-3]
+      data:
+        aliases: [shush-api-3]
+
+networks:
+  edge:
+    name: syamdev-edge
+    external: true
+  data:
+    name: syamdev-data
+    external: true

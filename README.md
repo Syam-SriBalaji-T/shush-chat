@@ -523,6 +523,35 @@ Two things that will catch you out:
     rpk security user create shush -p 'your-password' --mechanism SCRAM-SHA-256
   ```
 
+### On the shared platform
+
+For a box running several apps, `compose.platform.yaml` brings up only the three replicas and
+joins them to shared infrastructure owned by
+[`syamdev-platform`](https://github.com/Syam-SriBalaji-T/syamdev-platform) — one Postgres with a
+database per tenant, one Redpanda with prefix-scoped ACLs, one Elasticsearch with prefix-scoped
+roles, one MinIO bucket, and a Redis instance of its own.
+
+```bash
+# in syamdev-platform, once
+./bootstrap.sh
+docker compose --env-file ../secrets.env -f data/compose.yaml      up -d
+docker compose --env-file ../secrets.env -f streaming/compose.yaml up -d
+docker compose --env-file ../secrets.env -f search/compose.yaml    up -d
+docker compose --env-file ../secrets.env -f edge/compose.yaml      up -d
+
+# here
+docker compose --env-file ../secrets.env -f compose.platform.yaml up -d --build
+```
+
+The standalone files above still work unchanged, and that is deliberate: a reviewer must be able
+to clone this repo and run everything without knowing a platform exists, and a deployment must
+be able to share infrastructure with other apps. Those are different jobs, so they are different
+files rather than one compromise.
+
+On the platform the topic becomes `shush.chat.messages`, the consumer group `shush.chat-writer`
+and the search index `shush-waiting` — all configurable, because the ACLs only grant the tenant
+its own prefix. The guarantee is unchanged; only the names are namespaced.
+
 ### Development
 
 Infrastructure in Docker, the application on the host so a debugger attaches:
