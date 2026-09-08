@@ -16,214 +16,512 @@
   <title>Shush</title>
   <style>
     :root {
-      --bg: #0e1116;
-      --surface: #161b22;
-      --surface-2: #1f262f;
-      --border: #2b333d;
-      --text: #e6edf3;
-      --muted: #8b98a5;
-      --accent: #6ea8fe;
-      --accent-text: #07101f;
-      --mine: #1e3a5f;
-      --danger: #f0796a;
+      --bg: #0a0b10;
+      --bg-glow-a: rgba(124, 92, 255, 0.16);
+      --bg-glow-b: rgba(56, 208, 224, 0.10);
+      --surface: #12141c;
+      --surface-2: #191c26;
+      --surface-3: #212533;
+      --border: #262a38;
+      --border-soft: #1c2029;
+      --text: #e9ecf5;
+      --muted: #8b93a7;
+      --faint: #5d6479;
+      --accent: #7c5cff;
+      --accent-2: #38d0e0;
+      --accent-text: #ffffff;
+      --mine-a: #6d4dfb;
+      --mine-b: #8b5cf6;
+      --online: #34d399;
+      --danger: #fb7185;
+      --radius: 14px;
+      --radius-lg: 20px;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
     }
 
     html[data-theme="light"] {
-      --bg: #f6f8fa;
+      --bg: #f4f5fa;
+      --bg-glow-a: rgba(124, 92, 255, 0.12);
+      --bg-glow-b: rgba(56, 208, 224, 0.10);
       --surface: #ffffff;
-      --surface-2: #eef1f4;
-      --border: #d5dbe1;
-      --text: #1a1f24;
-      --muted: #5b6570;
-      --accent: #2b6cb0;
+      --surface-2: #f2f3f9;
+      --surface-3: #e7e9f2;
+      --border: #dfe2ee;
+      --border-soft: #eaecf4;
+      --text: #14161f;
+      --muted: #5c6478;
+      --faint: #8b93a7;
+      --accent: #6d4dfb;
+      --accent-2: #0ea5b7;
       --accent-text: #ffffff;
-      --mine: #dbeafe;
-      --danger: #b42318;
+      --mine-a: #6d4dfb;
+      --mine-b: #8b5cf6;
+      --online: #10b981;
+      --danger: #e11d48;
+      --shadow: 0 10px 30px rgba(20, 22, 31, 0.10);
     }
 
     * { box-sizing: border-box; }
 
+    /* Every panel below sets display:flex or display:grid, and that beats the user-agent
+       rule the hidden attribute relies on. Without this, `element.hidden = true` sets the
+       attribute and changes nothing on screen -- every view renders on top of every other. */
+    [hidden] { display: none !important; }
+
+    html, body { height: 100%; }
+
     body {
       margin: 0;
-      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
+      font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
       color: var(--text);
-      min-height: 100vh;
+      background: var(--bg);
+      /* Two soft lights behind everything. Cheap, and it stops a flat dark page reading as
+         "unstyled" rather than "deliberately dark". */
+      background-image:
+        radial-gradient(900px 500px at 12% -10%, var(--bg-glow-a), transparent 60%),
+        radial-gradient(800px 500px at 105% 0%, var(--bg-glow-b), transparent 55%);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; color: inherit; }
+
+    button {
+      cursor: pointer;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 9px 16px;
+      transition: background .15s ease, border-color .15s ease, transform .08s ease, opacity .15s ease;
+    }
+    button:hover:not(:disabled) { background: var(--surface-3); border-color: var(--faint); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, .tile:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--accent), var(--mine-b));
+      border-color: transparent;
+      color: var(--accent-text);
+      font-weight: 600;
+      box-shadow: 0 6px 18px rgba(109, 77, 251, .32);
+    }
+    .primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, var(--mine-b), var(--accent));
+      border-color: transparent;
+    }
+
+    .ghost { background: transparent; border-color: var(--border); }
+
+    input[type="text"], input[type="email"], input[type="password"] {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 11px 16px;
+      outline: none;
+    }
+    input::placeholder { color: var(--faint); }
+
+    .muted { color: var(--muted); }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    /* ---------- shell ---------- */
+
+    #shell {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto 1fr;
     }
 
     header {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      gap: 14px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      backdrop-filter: blur(12px);
+      position: relative;
+      z-index: 5;
     }
 
-    header h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
-    header .spacer { flex: 1; }
-
-    main { max-width: 900px; margin: 0 auto; padding: 24px 20px 48px; }
-
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
+    /* A button, not a heading: it navigates home, so it has to be reachable by keyboard and
+       announce itself as something you can press. */
+    #home {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      background: none;
+      border: none;
+      padding: 4px 8px;
+      margin-left: -8px;
       border-radius: 10px;
-      padding: 20px;
-      margin-bottom: 16px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    #home:hover { background: var(--surface-2); }
+    #home .mark {
+      width: 26px; height: 26px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: grid; place-items: center;
+      color: #fff; font-size: 14px; font-weight: 800;
+      box-shadow: 0 4px 12px rgba(109, 77, 251, .4);
+    }
+    #home .word {
+      background: linear-gradient(120deg, var(--text), var(--muted));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
     }
 
-    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
+    .spacer { flex: 1; }
 
-    button {
-      font: inherit;
-      padding: 8px 14px;
-      border-radius: 7px;
-      border: 1px solid var(--border);
+    .chip {
+      font-size: 12px;
+      color: var(--muted);
       background: var(--surface-2);
-      color: var(--text);
-      cursor: pointer;
-    }
-
-    button:hover:not(:disabled) { border-color: var(--accent); }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-
-    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
-
-    input[type="text"], input[type="email"], input[type="password"] {
-      font: inherit;
-      padding: 8px 12px;
-      border-radius: 7px;
       border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      width: 100%;
-    }
-
-    .tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
-
-    .tile {
-      padding: 10px 16px;
       border-radius: 999px;
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      cursor: pointer;
-      user-select: none;
+      padding: 5px 11px;
+      white-space: nowrap;
     }
 
-    .tile[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+    main {
+      display: grid;
+      grid-template-columns: 272px 1fr;
+      min-height: 0;
+    }
 
-    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .muted { color: var(--muted); font-size: 13px; }
+    /* ---------- sidebar ---------- */
 
-    #messages {
-      height: 340px;
+    #sidebar {
+      border-right: 1px solid var(--border-soft);
+      padding: 16px;
       overflow-y: auto;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      background: var(--bg);
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 18px;
+      min-height: 0;
     }
 
-    .msg { max-width: 72%; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); align-self: flex-start; word-wrap: break-word; }
-    .msg.mine { background: var(--mine); align-self: flex-end; }
-    .msg img { max-width: 100%; border-radius: 8px; display: block; }
-    .msg .seq { font-size: 11px; color: var(--muted); margin-left: 8px; }
+    .side-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+      color: var(--faint);
+      margin: 0 0 9px 2px;
+    }
+    .badge {
+      background: linear-gradient(135deg, var(--accent), var(--mine-b));
+      color: #fff; font-size: 10px; font-weight: 700;
+      border-radius: 999px; padding: 1px 7px; letter-spacing: 0;
+    }
 
-    .system { align-self: center; font-size: 13px; color: var(--muted); font-style: italic; }
+    ul.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 
-    #friends { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-    #friends li { display: flex; align-items: center; gap: 10px; }
+    /* One row per friend. A button because clicking it opens that conversation. */
+    .person {
+      width: 100%;
+      display: flex; align-items: center; gap: 10px;
+      background: transparent; border: 1px solid transparent;
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      text-align: left;
+    }
+    .person:hover { background: var(--surface-2); border-color: var(--border-soft); }
+    .person[aria-current="true"] { background: var(--surface-2); border-color: var(--accent); }
+    .person .who { min-width: 0; flex: 1; }
+    .person .name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .person .sub { display: block; font-size: 12px; color: var(--faint); }
 
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-    .dot.online { background: #3fb950; }
+    .avatar {
+      width: 34px; height: 34px; flex: none;
+      border-radius: 11px;
+      display: grid; place-items: center;
+      font-size: 13px; font-weight: 700; color: #fff;
+      position: relative;
+    }
+    .avatar .dot {
+      position: absolute; right: -2px; bottom: -2px;
+      width: 11px; height: 11px; border-radius: 50%;
+      background: var(--faint);
+      border: 2px solid var(--bg);
+    }
+    .avatar .dot.online { background: var(--online); }
 
-    [hidden] { display: none !important; }
+    .request {
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      border-radius: var(--radius);
+      padding: 11px;
+      display: flex; flex-direction: column; gap: 9px;
+    }
+    .request p { margin: 0; font-size: 13px; }
+    .request .row button { padding: 6px 13px; font-size: 13px; }
+
+    .empty { color: var(--faint); font-size: 13px; margin: 2px 2px 0; }
+
+    /* ---------- main column ---------- */
+
+    #stage { min-height: 0; display: flex; flex-direction: column; }
+
+    .center {
+      flex: 1; min-height: 0;
+      display: grid; place-items: center;
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 620px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: 28px;
+    }
+
+    .hero { text-align: center; max-width: 520px; }
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 34px; line-height: 1.15; letter-spacing: -0.03em;
+    }
+    .hero h1 span {
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .hero p { margin: 0 auto 22px; max-width: 400px; }
+
+    h2.section {
+      font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+      color: var(--faint); margin: 0 0 11px;
+    }
+    .block + .block { margin-top: 24px; }
+
+    .tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .tile {
+      border-radius: 999px;
+      padding: 8px 15px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .tile[aria-pressed="true"] {
+      background: linear-gradient(135deg, var(--accent), var(--mine-b));
+      border-color: transparent; color: #fff; font-weight: 600;
+      box-shadow: 0 4px 14px rgba(109, 77, 251, .3);
+    }
+
+    /* ---------- chat ---------- */
+
+    #chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+    .chat-head {
+      display: flex; align-items: center; gap: 12px;
+      padding: 13px 22px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    #chatHeading { margin: 0; font-size: 15px; font-weight: 600; }
+    #chatSub { font-size: 12px; color: var(--faint); }
+
+    #messages {
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+      padding: 22px;
+      display: flex; flex-direction: column; gap: 3px;
+      scroll-behavior: smooth;
+    }
+
+    .msg {
+      max-width: min(560px, 74%);
+      align-self: flex-start;
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 16px 16px 16px 5px;
+      padding: 9px 13px;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      animation: rise .16s ease-out;
+    }
+    .msg + .msg { margin-top: 3px; }
+    .msg.mine {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--mine-a), var(--mine-b));
+      border-color: transparent;
+      color: #fff;
+      border-radius: 16px 16px 5px 16px;
+    }
+    .msg img { max-width: 260px; border-radius: 10px; display: block; margin: 2px 0; }
+    .msg .seq { font-size: 10px; opacity: .5; margin-left: 8px; vertical-align: baseline; }
+
+    @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .system {
+      align-self: center;
+      color: var(--faint);
+      font-size: 12.5px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      padding: 4px 13px;
+      margin: 7px 0;
+      text-align: center;
+    }
+
+    .composer {
+      display: flex; align-items: center; gap: 9px;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border-soft);
+    }
+    #composer { flex: 1; }
+    .icon-btn { padding: 9px 12px; }
+
+    #typingIndicator { margin: 0 20px 8px; font-size: 12px; color: var(--muted); min-height: 16px; }
+
+    /* Narrow screens: the sidebar becomes a strip above the conversation rather than
+       disappearing, because the friends list is the only way back to an existing conversation. */
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+      #sidebar {
+        border-right: none; border-bottom: 1px solid var(--border-soft);
+        max-height: 34vh; padding: 12px;
+      }
+      .msg { max-width: 86%; }
+    }
   </style>
 </head>
 <body>
-<header>
-  <h1>Shush</h1>
-  <span class="muted" id="whoami"></span>
-  <span class="spacer"></span>
-  <span class="muted" id="nodeId"></span>
-  <button id="themeToggle" type="button">Light</button>
-</header>
+<div id="shell">
+  <header>
+    <button id="home" type="button" title="Back to the start">
+      <span class="mark">S</span><span class="word">Shush</span>
+    </button>
+    <span class="chip" id="whoami" hidden></span>
+    <span class="spacer"></span>
+    <span class="chip" id="nodeId" hidden></span>
+    <button id="themeToggle" class="ghost" type="button">Light</button>
+  </header>
 
-<main>
-  <!-- Step 1: one line, one button, nothing competing for attention. -->
-  <section class="panel" id="landing">
-    <h2>Talk to a stranger who likes what you like</h2>
-    <p class="muted">No sign-up, no email, no form. Pick a couple of things you are into and we will find you someone.</p>
-    <button class="primary" id="startChatting" type="button">Start chatting</button>
-  </section>
+  <main>
+    <aside id="sidebar" hidden>
+      <div>
+        <h2 class="side-title">Requests <span class="badge" id="requestCount" hidden>0</span></h2>
+        <ul class="list" id="requests"></ul>
+        <p class="empty" id="noRequests">Nobody has asked to keep you yet.</p>
+      </div>
 
-  <section class="panel" id="setup" hidden>
-    <h2>What are you into?</h2>
-    <div class="tiles" id="interestTiles"></div>
-    <div class="row" style="margin-bottom: 16px;">
-      <button id="showOthers" type="button">Show others</button>
-    </div>
+      <div>
+        <h2 class="side-title">Friends</h2>
+        <ul class="list" id="friends"></ul>
+        <p class="empty" id="noFriends">Nobody yet. Keep someone you enjoyed talking to.</p>
+      </div>
 
-    <h2>Your name</h2>
-    <div class="row" style="margin-bottom: 20px;">
-      <strong id="displayName"></strong>
-      <button id="shuffleName" type="button">Shuffle</button>
-      <span class="muted" id="shuffleNote"></span>
-    </div>
+      <div>
+        <button class="primary" id="newChat" type="button" style="width: 100%;">Find someone new</button>
+      </div>
 
-    <h2>How long will you wait?</h2>
-    <div class="tiles" id="patienceTiles">
-      <button class="tile" type="button" data-patience="5" aria-pressed="true">5 seconds</button>
-      <button class="tile" type="button" data-patience="10" aria-pressed="false">10 seconds</button>
-      <button class="tile" type="button" data-patience="0" aria-pressed="false">As long as it takes</button>
-    </div>
-    <p class="muted" id="patienceNote">If nobody who shares your interests turns up in 5 seconds, we will just find you anyone.</p>
+      <div id="saveBox" hidden>
+        <h2 class="side-title">Save your account</h2>
+        <p class="empty" id="savePrompt" style="margin-bottom: 9px;">
+          Only this browser connects you to this account. Clear it and your friends are gone.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          <input type="email" id="email" placeholder="you@example.com">
+          <input type="password" id="password" placeholder="Password">
+          <button id="saveAccount" type="button">Save</button>
+          <span class="empty" id="saveStatus"></span>
+        </div>
+      </div>
+    </aside>
 
-    <button class="primary" id="findSomeone" type="button" disabled>Find someone</button>
-    <span class="muted" id="findStatus"></span>
-  </section>
+    <section id="stage">
+      <!-- Landing -->
+      <div class="center" id="landing">
+        <div class="hero">
+          <h1>Talk to <span>someone new</span>.</h1>
+          <p class="muted">
+            No sign-up, no email, no form. Pick a couple of things you are into and we will find
+            you someone who is into them too.
+          </p>
+          <button class="primary" id="startChatting" type="button" style="padding: 12px 26px;">
+            Start chatting
+          </button>
+        </div>
+      </div>
 
-  <section class="panel" id="chat" hidden>
-    <h2 id="chatHeading">Conversation</h2>
-    <div id="messages"></div>
-    <div class="row" style="margin-top: 12px;">
-      <input type="text" id="composer" placeholder="Say something" autocomplete="off" style="flex: 1;">
-      <button class="primary" id="send" type="button">Send</button>
-      <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
-      <button id="attach" type="button">Image</button>
-      <button id="addFriend" type="button">Add friend</button>
-      <button id="leave" type="button">Leave</button>
-    </div>
-    <p class="muted" id="typingIndicator"></p>
-  </section>
+      <!-- Setup -->
+      <div class="center" id="setup" hidden>
+        <div class="card">
+          <div class="block">
+            <h2 class="section">What are you into?</h2>
+            <div class="tiles" id="interestTiles"></div>
+            <div class="row" style="margin-top: 10px;">
+              <button id="showOthers" class="ghost" type="button">Show others</button>
+            </div>
+          </div>
 
-  <section class="panel" id="social" hidden>
-    <h2>Friends</h2>
-    <ul id="friends"></ul>
-    <p class="muted" id="noFriends">Nobody yet. Keep someone you enjoyed talking to.</p>
+          <div class="block">
+            <h2 class="section">Your name</h2>
+            <div class="row">
+              <strong id="displayName"></strong>
+              <button id="shuffleName" class="ghost" type="button">Shuffle</button>
+              <span class="muted" id="shuffleNote"></span>
+            </div>
+          </div>
 
-    <h2 style="margin-top: 22px;">Requests</h2>
-    <ul id="requests" style="list-style: none; margin: 0; padding: 0;"></ul>
+          <div class="block">
+            <h2 class="section">How long will you wait?</h2>
+            <div class="tiles" id="patienceTiles">
+              <button class="tile" type="button" data-patience="5" aria-pressed="true">5 seconds</button>
+              <button class="tile" type="button" data-patience="10" aria-pressed="false">10 seconds</button>
+              <button class="tile" type="button" data-patience="0" aria-pressed="false">As long as it takes</button>
+            </div>
+            <p class="muted" id="patienceNote" style="margin: 10px 0 0; font-size: 13px;">
+              If nobody who shares your interests turns up in 5 seconds, we will just find you anyone.
+            </p>
+          </div>
 
-    <h2 style="margin-top: 22px;">Save your account</h2>
-    <p class="muted" id="savePrompt">
-      Right now the only thing connecting you to this account is this browser. Clear your history
-      or pick up your phone instead, and your friends are gone.
-    </p>
-    <div class="row">
-      <input type="email" id="email" placeholder="you@example.com" style="max-width: 260px;">
-      <input type="password" id="password" placeholder="Password" style="max-width: 200px;">
-      <button id="saveAccount" type="button">Save</button>
-      <span class="muted" id="saveStatus"></span>
-    </div>
-  </section>
-</main>
+          <div class="block row">
+            <button class="primary" id="findSomeone" type="button" disabled>Find someone</button>
+            <span class="muted" id="findStatus"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat -->
+      <div id="chat" hidden>
+        <div class="chat-head">
+          <div class="avatar" id="chatAvatar">?</div>
+          <div style="min-width: 0;">
+            <h2 id="chatHeading">Conversation</h2>
+            <div id="chatSub"></div>
+          </div>
+          <span class="spacer"></span>
+          <button id="addFriend" class="ghost" type="button">Add friend</button>
+          <button id="leave" class="ghost" type="button">Leave</button>
+        </div>
+
+        <div id="messages"></div>
+        <p id="typingIndicator"></p>
+
+        <div class="composer">
+          <button id="attach" class="ghost icon-btn" type="button" title="Send an image">Image</button>
+          <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+          <input type="text" id="composer" placeholder="Say something" autocomplete="off">
+          <button class="primary" id="send" type="button">Send</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
 
 <script>
+(() => {
   "use strict";
 
   const api = (path, options = {}) => {
@@ -239,9 +537,16 @@
     userId: null,
     displayName: null,
     conversationId: null,
+    // Who is on the other side, when we know: friends opened from the sidebar, and the
+    // stranger the server named in `matched`.
+    peerId: null,
+    peerName: null,
     selectedInterests: [],
     patience: 5,
     socket: null,
+    signedIn: false,
+    searching: false,
+    friends: [],
     // The client's own guard against seeing a message twice. The server deduplicates writes;
     // this deduplicates *renders*, because a reconnect can legitimately redeliver.
     seenSeqs: new Set(),
@@ -293,6 +598,51 @@
     applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   });
 
+  /* ---------- avatars ---------- */
+
+  // Derived from the id, so the same person is the same colour on both screens without the
+  // server having to store one.
+  const avatarHue = (id) => {
+    let hash = 0;
+    for (const character of String(id || "")) {
+      hash = (hash * 31 + character.charCodeAt(0)) % 360;
+    }
+    return hash;
+  };
+
+  const paintAvatar = (node, id, name) => {
+    const hue = avatarHue(id);
+    node.style.background =
+      "linear-gradient(135deg, hsl(" + hue + " 70% 55%), hsl(" + ((hue + 42) % 360) + " 70% 45%))";
+    node.textContent = (name || "?").trim().charAt(0).toUpperCase() || "?";
+  };
+
+  /* ---------- views ---------- */
+
+  const showView = (name) => {
+    el("landing").hidden = name !== "landing";
+    el("setup").hidden = name !== "setup";
+    el("chat").hidden = name !== "chat";
+    el("sidebar").hidden = !state.signedIn;
+  };
+
+  /**
+   * The logo is a way back. Leaving a stranger conversation by navigating away would be a
+   * silent disappearance for the other person, so this only changes what is on screen -- the
+   * conversation is still there, and `leave` is still the button that ends it.
+   */
+  const goHome = () => {
+    if (!state.signedIn) {
+      showView("landing");
+      return;
+    }
+    el("findStatus").textContent = "";
+    showView("setup");
+  };
+
+  el("home").addEventListener("click", goHome);
+  el("newChat").addEventListener("click", goHome);
+
   /* ---------- identity ---------- */
 
   const storedToken = () => {
@@ -315,12 +665,14 @@
     state.jwt = session.jwt;
     state.userId = session.user.id;
     state.displayName = session.user.displayName;
+    state.signedIn = true;
     if (session.token) {
       rememberToken(session.token);
     }
     el("whoami").textContent = session.user.displayName;
+    el("whoami").hidden = false;
     el("displayName").textContent = session.user.displayName;
-    el("savePrompt").hidden = !session.user.anonymous;
+    el("saveBox").hidden = !session.user.anonymous;
   };
 
   const startSession = async () => {
@@ -427,6 +779,7 @@
       case "hello":
         // Diagnostic only, and worth surfacing: it makes "any node serves any user" visible.
         el("nodeId").textContent = "served by " + frame.nodeId;
+        el("nodeId").hidden = false;
         break;
       case "matched":
         onMatched(frame);
@@ -441,6 +794,7 @@
         addSystemLine(frame.online
           ? "They are back."
           : "They have gone offline. Anything you send will reach them when they return.");
+        loadFriends();
         break;
       case "left":
         addSystemLine("They have left. This conversation is over.");
@@ -449,7 +803,10 @@
         el("chatHeading").dataset.readSeq = String(frame.seq);
         break;
       case "friendRequested":
-        addRequest(frame);
+        // Straight into the sidebar, which is on screen whenever you are signed in. It used to
+        // land in a panel that only appeared after a match, so a request arriving at any other
+        // moment was delivered, rendered, and invisible.
+        loadRequests();
         break;
       case "friendRequestAccepted":
         addSystemLine("They kept you. They are in your friends list now.");
@@ -465,28 +822,70 @@
 
   /* ---------- matching and chat ---------- */
 
-  const onMatched = (frame) => {
-    state.conversationId = frame.conversationId;
-    state.seenSeqs = new Set();
-    el("messages").innerHTML = "";
-    el("setup").hidden = true;
-    el("chat").hidden = false;
-    el("social").hidden = false;
-    el("findStatus").textContent = "";
+  let searchHintTimer = null;
 
+  const enterConversation = (conversationId, peerId, peerName, heading, subheading) => {
+    state.conversationId = conversationId;
+    state.peerId = peerId;
+    // Read by the browser test to assert that two clients are actually in the same
+    // conversation. A stale wait-pool entry will pair a client with a ghost, and every
+    // later assertion then quietly tests the wrong pair.
+    window.__shush = {conversationId, peerId, userId: state.userId};
+    state.peerName = peerName;
+    state.seenSeqs = new Set();
+    state.searching = false;
+    clearTimeout(searchHintTimer);
+
+    el("messages").innerHTML = "";
+    el("typingIndicator").textContent = "";
+    el("findStatus").textContent = "";
+    el("chatHeading").textContent = heading;
+    el("chatSub").textContent = subheading || "";
+    paintAvatar(el("chatAvatar"), peerId, peerName);
+    showView("chat");
+    markActiveFriend();
+  };
+
+  const onMatched = (frame) => {
     // Honest about which kind of match this was.
-    if (frame.randomMatch) {
-      el("chatHeading").textContent = "A random match — nobody sharing your interests was around";
-    } else {
-      const names = (frame.sharedInterestIds || [])
-        .map((id) => (allInterests.find((interest) => interest.id === id) || {}).label)
-        .filter(Boolean);
-      el("chatHeading").textContent = "You both like " + names.join(" and ");
-    }
+    const heading = frame.randomMatch
+      ? "A random match — nobody sharing your interests was around"
+      : "You both like " + (frame.sharedInterestIds || [])
+          .map((id) => (allInterests.find((interest) => interest.id === id) || {}).label)
+          .filter(Boolean)
+          .join(" and ");
+
+    enterConversation(frame.conversationId, frame.withUserId, null, heading, "A stranger");
+    el("addFriend").hidden = false;
+    el("leave").hidden = false;
     loadFriends();
   };
 
-  const onMessage = (frame) => {
+  /** Opening an existing friend's conversation: no matching involved, just history. */
+  const openFriend = async (friend) => {
+    enterConversation(friend.conversationId, friend.userId, friend.displayName,
+      friend.displayName || "Someone", friend.online ? "Online" : "Offline");
+    // Already friends, so there is nothing left to ask for, and nothing to walk out of.
+    el("addFriend").hidden = true;
+    el("leave").hidden = true;
+
+    const response = await api(
+      "/api/conversations/" + friend.conversationId + "/messages?limit=50");
+    if (!response.ok) {
+      addSystemLine("That conversation could not be opened.");
+      return;
+    }
+    const history = await response.json();
+    // Oldest first, already sorted by the server: it walks the index backwards from the cursor
+    // to build the page, then re-sorts ascending before returning it. Rendered as it arrives.
+    history.messages.forEach((message) => renderMessage(message, false));
+    if (!history.messages.length) {
+      addSystemLine("Nothing here yet. Say something.");
+    }
+    scrollMessages();
+  };
+
+  const renderMessage = (frame, announce = true) => {
     if (state.seenSeqs.has(frame.seq)) {
       return;
     }
@@ -499,7 +898,7 @@
     if (frame.kind === "image" && frame.mediaKey) {
       const image = document.createElement("img");
       image.alt = "shared image";
-      image.src = "/api/media/" + encodeURIComponent(frame.mediaKey);
+      image.src = mediaUrl(frame.mediaKey);
       bubble.appendChild(image);
     } else {
       bubble.appendChild(document.createTextNode(frame.body));
@@ -510,13 +909,40 @@
     seq.textContent = "#" + frame.seq;
     bubble.appendChild(seq);
 
-    const messages = el("messages");
-    messages.appendChild(bubble);
-    messages.scrollTop = messages.scrollHeight;
+    el("messages").appendChild(bubble);
 
-    if (frame.senderId !== state.userId) {
+    if (announce && frame.senderId !== state.userId) {
       sendFrame({type: "read", conversationId: state.conversationId, seq: frame.seq});
     }
+  };
+
+  const onMessage = (frame) => {
+    // A frame for a conversation that is not on screen belongs to a friend we are not looking
+    // at. Nothing is lost by not rendering it: the history load picks it up when that thread
+    // is opened, because the database is the record and this list is only a view of it.
+    if (frame.conversationId !== state.conversationId) {
+      loadFriends();
+      return;
+    }
+    renderMessage(frame);
+    scrollMessages();
+  };
+
+  /**
+   * The media endpoint takes the key as a real path, so the separators have to stay separators:
+   * encodeURIComponent turns them into %2F, which Spring's firewall rejects outright with a 400
+   * before any handler sees it. Each segment is still encoded -- just not the slashes between
+   * them.
+   *
+   * <p>The token rides in the query because an img tag cannot send an Authorization header, the
+   * same reason the websocket handshake does it. The server accepts it on this path only.
+   */
+  const mediaUrl = (key) => "/api/media/"
+    + String(key).split("/").map(encodeURIComponent).join("/")
+    + "?token=" + encodeURIComponent(state.jwt);
+
+  const scrollMessages = () => {
+    el("messages").scrollTop = el("messages").scrollHeight;
   };
 
   const addSystemLine = (text) => {
@@ -524,7 +950,7 @@
     line.className = "system";
     line.textContent = text;
     el("messages").appendChild(line);
-    el("messages").scrollTop = el("messages").scrollHeight;
+    scrollMessages();
   };
 
   let typingTimer = null;
@@ -578,11 +1004,25 @@
 
   el("findSomeone").addEventListener("click", async () => {
     el("findStatus").textContent = "Looking…";
+    state.searching = true;
     await api("/api/interests/mine", {
       method: "PUT",
       body: JSON.stringify({interestIds: state.selectedInterests}),
     });
     sendFrame({type: "find", interestIds: state.selectedInterests, patience: state.patience});
+
+    // Matching skips anyone already a friend, so with a few friends and nobody else waiting it
+    // looks exactly like a broken matcher: "Looking…" forever, no error, and nothing in any
+    // log, because refusing to pair you with an existing friend is correct behaviour. Say so.
+    clearTimeout(searchHintTimer);
+    searchHintTimer = setTimeout(() => {
+      if (!state.searching) {
+        return;
+      }
+      el("findStatus").textContent = state.friends.length
+        ? "Still looking. People you are already friends with are skipped — message them from the list on the left."
+        : "Still looking. Nobody sharing your interests is here right now.";
+    }, 12000);
   });
 
   /* ---------- images ---------- */
@@ -607,15 +1047,30 @@
     });
     if (!response.ok) {
       addSystemLine("That image was refused: " + (await response.json()).message);
+      el("imageInput").value = "";
       return;
     }
 
     const upload = await response.json();
-    await fetch(upload.uploadUrl, {
-      method: "PUT",
-      headers: {"Content-Type": file.type},
-      body: file,
-    });
+    // Reported rather than swallowed. This PUT goes to object storage, not to the API, so when
+    // it fails it fails in the browser and the server has nothing to log -- an unhandled
+    // rejection here is a person watching an image silently never arrive.
+    try {
+      const stored = await fetch(upload.uploadUrl, {
+        method: "PUT",
+        headers: {"Content-Type": file.type},
+        body: file,
+      });
+      if (!stored.ok) {
+        addSystemLine("That image could not be stored (" + stored.status + ").");
+        el("imageInput").value = "";
+        return;
+      }
+    } catch (unreachable) {
+      addSystemLine("Could not reach image storage from this browser.");
+      el("imageInput").value = "";
+      return;
+    }
 
     sendFrame({
       type: "send",
@@ -627,7 +1082,7 @@
     el("imageInput").value = "";
   });
 
-  /* ---------- friends ---------- */
+  /* ---------- friends and requests ---------- */
 
   el("addFriend").addEventListener("click", async () => {
     if (!state.conversationId) {
@@ -640,42 +1095,104 @@
       : "You have already asked.");
   });
 
-  const addRequest = (frame) => {
-    const item = document.createElement("li");
-    item.className = "row";
-    item.textContent = "Someone would like to keep you.";
-
-    const accept = document.createElement("button");
-    accept.textContent = "Accept";
-    accept.addEventListener("click", async () => {
-      await api("/api/friend-requests/" + frame.requestId + "/accept", {method: "POST"});
-      item.remove();
-      loadFriends();
+  const markActiveFriend = () => {
+    document.querySelectorAll("#friends .person").forEach((node) => {
+      node.setAttribute("aria-current",
+        node.dataset.conversationId === state.conversationId ? "true" : "false");
     });
-
-    const decline = document.createElement("button");
-    decline.textContent = "Decline";
-    decline.addEventListener("click", async () => {
-      await api("/api/friend-requests/" + frame.requestId + "/decline", {method: "POST"});
-      item.remove();
-    });
-
-    item.append(accept, decline);
-    el("requests").appendChild(item);
   };
 
   const loadFriends = async () => {
-    const friends = await (await api("/api/friends")).json();
+    const response = await api("/api/friends");
+    if (!response.ok) {
+      return;
+    }
+    state.friends = await response.json();
     const list = el("friends");
     list.innerHTML = "";
-    el("noFriends").hidden = friends.length > 0;
+    el("noFriends").hidden = state.friends.length > 0;
 
-    friends.forEach((friend) => {
+    state.friends.forEach((friend) => {
       const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "person";
+      button.dataset.conversationId = friend.conversationId;
+
+      const avatar = document.createElement("span");
+      avatar.className = "avatar";
+      paintAvatar(avatar, friend.userId, friend.displayName);
       const dot = document.createElement("span");
       dot.className = "dot" + (friend.online ? " online" : "");
-      item.appendChild(dot);
-      item.appendChild(document.createTextNode(friend.displayName || "Someone"));
+      avatar.appendChild(dot);
+
+      const who = document.createElement("span");
+      who.className = "who";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = friend.displayName || "Someone";
+      const sub = document.createElement("span");
+      sub.className = "sub";
+      sub.textContent = friend.online ? "Online" : "Offline";
+      who.append(name, sub);
+
+      button.append(avatar, who);
+      button.addEventListener("click", () => openFriend(friend));
+      item.appendChild(button);
+      list.appendChild(item);
+    });
+    markActiveFriend();
+  };
+
+  /**
+   * Pending requests, fetched rather than only listened for.
+   *
+   * <p>They used to arrive by websocket alone, into a panel that was revealed only by a match.
+   * A request that came in before a reload, or while its recipient was anywhere but in a
+   * conversation, was therefore delivered, rendered, and invisible, with no way to ever see it.
+   * The frame is now only a prompt to re-read the authoritative list.
+   */
+  const loadRequests = async () => {
+    const response = await api("/api/friend-requests");
+    if (!response.ok) {
+      return;
+    }
+    const pending = await response.json();
+    const list = el("requests");
+    list.innerHTML = "";
+    el("noRequests").hidden = pending.length > 0;
+    el("requestCount").hidden = pending.length === 0;
+    el("requestCount").textContent = String(pending.length);
+
+    pending.forEach((request) => {
+      const item = document.createElement("li");
+      item.className = "request";
+
+      const text = document.createElement("p");
+      text.textContent = "Someone would like to keep you.";
+
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const accept = document.createElement("button");
+      accept.className = "primary";
+      accept.textContent = "Accept";
+      accept.addEventListener("click", async () => {
+        await api("/api/friend-requests/" + request.id + "/accept", {method: "POST"});
+        await loadRequests();
+        await loadFriends();
+      });
+
+      const decline = document.createElement("button");
+      decline.className = "ghost";
+      decline.textContent = "Decline";
+      decline.addEventListener("click", async () => {
+        await api("/api/friend-requests/" + request.id + "/decline", {method: "POST"});
+        await loadRequests();
+      });
+
+      row.append(accept, decline);
+      item.append(text, row);
       list.appendChild(item);
     });
   };
@@ -702,9 +1219,12 @@
     await startSession();
     await loadInterests();
     await connect();
-    el("landing").hidden = true;
-    el("setup").hidden = false;
+    // Both before anything else can arrive, so a request that was already waiting is on screen
+    // from the moment you sign in rather than only after the next one happens to be pushed.
+    await Promise.all([loadFriends(), loadRequests()]);
+    showView("setup");
   });
+})();
 </script>
 </body>
 </html>
