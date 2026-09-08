@@ -133,15 +133,29 @@ class TestClientJourneyIT extends AbstractIT {
 
             // Ask to keep them, and see it accepted.
             click(alice, By.id("addFriend"));
-            waitFor(bob).until(ExpectedConditions.presenceOfElementLocated(
+            // visibilityOf, not presenceOf. Presence was the weaker assertion and it hid a real
+            // bug: the request list lived in a panel that was only ever revealed by a match, so
+            // an incoming request was delivered, added to the DOM, and invisible to the person
+            // it was for. The test passed the whole time. An element the recipient cannot see
+            // is not a delivered request.
+            waitFor(bob).until(ExpectedConditions.visibilityOfElementLocated(
                     By.cssSelector("#requests li button")));
             bob.findElements(By.cssSelector("#requests li button")).getFirst().click();
 
             waitFor(alice).until(driver -> driver.findElement(By.id("messages")).getText()
                     .contains("in your friends list"));
-            waitFor(bob).until(driver -> !driver.findElements(By.cssSelector("#friends li")).isEmpty());
+            waitFor(bob).until(ExpectedConditions.visibilityOfElementLocated(
+                    By.cssSelector("#friends li")));
 
             assertThat(bob.findElements(By.cssSelector("#friends li"))).hasSize(1);
+
+            // The friends list is the only route back to somebody you have kept: matching
+            // deliberately refuses to pair you with an existing friend, so if this row is not
+            // clickable there is no way to ever talk to them again.
+            WebElement friendRow = bob.findElement(By.cssSelector("#friends li .person"));
+            friendRow.click();
+            waitFor(bob).until(driver -> driver.findElement(By.id("messages")).getText()
+                    .contains("hello from alice"));
         } finally {
             alice.quit();
             bob.quit();

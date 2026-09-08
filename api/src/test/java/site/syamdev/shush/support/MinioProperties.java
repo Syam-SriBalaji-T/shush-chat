@@ -16,6 +16,10 @@ public class MinioProperties {
     DynamicPropertyRegistrar minioPropertyRegistrar() {
         return registry -> {
             registry.add("shush.storage.endpoint", AbstractIT.MINIO::getS3URL);
+            // The same address in tests: the "browser" here is the test itself, on the host,
+            // reaching the container through its mapped port. In Docker the two genuinely
+            // differ, which is the whole reason the setting exists.
+            registry.add("shush.storage.public-endpoint", AbstractIT.MINIO::getS3URL);
             registry.add("shush.storage.access-key", AbstractIT.MINIO::getUserName);
             registry.add("shush.storage.secret-key", AbstractIT.MINIO::getPassword);
         };

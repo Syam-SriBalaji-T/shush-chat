@@ -120,6 +120,22 @@ Each was invisible to code review and would have shipped.
 | 8 | `crypto.randomUUID` is undefined outside a secure context, so every send threw over plain HTTP | browser test reaching the app on a non-localhost host |
 | 9 | An exception in one frame handler closed the socket, so a bug looked like a network fault | browser test |
 | 10 | Any tenant could open the `postgres` maintenance database and read the shared catalogs | `verify-isolation.sh`, first run |
+| 11 | SASL was wired into the producer and consumer but not the `KafkaAdmin`, so topic creation failed silently and the broker auto-created `chat.messages` with **one** partition — the partitioning the whole design rests on, quietly not happening | reading `partitions assigned: []` while chasing something else |
+| 12 | Friend-request notifications were published *inside* the transaction that created them, so the recipient's client re-read the list and saw nothing | browser test |
+| 13 | Images could never render: `<img>` sends no `Authorization` header (401), and the client percent-encoded the key's slashes, which Spring's firewall rejects (400) | browser test asserting the image *loads*, not that a bubble exists |
+| 14 | The presigned upload URL was signed for `minio:9000` — a host no browser can resolve | browser test |
+| 15 | Single-quoting `.env` values made them shell-safe and broke `./mvnw spring-boot:run`, which reads the same file as `.properties` where a quote is just a character | a numeric port failing to parse |
+| 16 | `rpk security user update` rejects `-p`; only `create` takes it. Provisioning passed on a fresh volume and failed on every run after | second `docker compose up` |
+
+Two of these are worth separating out, because the tests that "covered" them passed:
+
+- **12 and 13 were both hidden by weak assertions.** The journey test waited for
+  `presenceOfElementLocated` on the request button — presence, not visibility — so it passed
+  against an element that no recipient could ever see. Nothing asserted that an image *loads*,
+  only that a bubble appeared. Both assertions are now the stronger ones.
+- **11 changed nothing observable.** Ordering still held, dedup still held, the harness still
+  passed — on one partition, with eleven of twelve consumers idle. A correctness harness cannot
+  catch a scalability property that has silently stopped being exercised.
 
 ---
 
