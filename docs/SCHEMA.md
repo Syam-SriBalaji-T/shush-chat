@@ -13,7 +13,7 @@
 > **Generated — do not edit.** Change the schema by adding a migration under
 > `api/src/main/resources/db/migration/`, then run `cd api && ./mvnw verify`.
 
-Generated 2026-09-07 from 13 tables.
+Generated 2026-09-08 from 13 tables.
 
 ## Migrations applied
 

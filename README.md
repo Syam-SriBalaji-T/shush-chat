@@ -13,12 +13,21 @@ and then prove it:
 Everything else in the system exists to force that problem into the open.
 
 ```bash
-git clone <this repo> && cd shush-chat
-docker compose -f compose.yaml -f compose.replicas.yaml --profile full up -d --build
+# 1. shared infrastructure, once
+git clone git@github.com:Syam-SriBalaji-T/syamdev-platform.git && cd syamdev-platform
+cp .env.example .env && ./bootstrap.sh
+for s in data streaming search edge; do
+  docker compose --env-file .env -f $s/compose.yaml up -d
+done
+
+# 2. this app
+cd .. && git clone <this repo> && cd shush-chat
+cp .env.example .env                      # the shared values must match the platform's
+docker compose --env-file .env -f compose.platform.yaml up -d --build
 open http://localhost:8081/
 ```
 
-Nine containers, no configuration, no account anywhere. Details in [§8](#8-one-command-to-run-it).
+Details in [§8](#8-running-it).
 
 ---
 
@@ -31,7 +40,7 @@ Nine containers, no configuration, no account anywhere. Details in [§8](#8-one-
 5. [Benchmarks](#5-benchmarks)
 6. [The correctness harness](#6-the-correctness-harness)
 7. [Known limitations](#7-known-limitations)
-8. [One command to run it](#8-one-command-to-run-it)
+8. [Running it](#8-running-it)
 
 Plus [Open Choices](#open-choices) — decisions taken where the specification was silent.
 
@@ -434,19 +443,43 @@ never a production secret store.
 
 ---
 
-## 8. One command to run it
+## 8. Running it
+
+Infrastructure is shared with every other app on the box and lives in
+[`syamdev-platform`](https://github.com/Syam-SriBalaji-T/syamdev-platform); metrics live in
+[`syamdev-observability`](https://github.com/Syam-SriBalaji-T/syamdev-observability). This repo
+contains the application, the harness and the client — nothing stateful.
+
+> **This deliberately gives up R7.** Earlier versions shipped a self-contained `compose.yaml` so
+> a reviewer could clone this repo alone and run everything with one command. That was traded
+> away when the box stopped hosting only this app. It was a real cost, taken knowingly.
+
+### Start the platform, once
 
 ```bash
-docker compose -f compose.yaml -f compose.replicas.yaml --profile full up -d --build
+cd syamdev-platform
+cp .env.example .env          # fill it in
+./bootstrap.sh                # creates the syamdev-edge and syamdev-data networks
+
+docker compose --env-file .env -f data/compose.yaml      up -d   # postgres, minio, redis-shush
+docker compose --env-file .env -f streaming/compose.yaml up -d   # redpanda
+docker compose --env-file .env -f search/compose.yaml    up -d   # elasticsearch
+docker compose --env-file .env -f edge/compose.yaml      up -d   # nginx
 ```
 
-Nine containers: three api replicas, nginx, Postgres, Redis, Redpanda, Elasticsearch and MinIO.
-No `.env`, no account with any provider, no configuration. Then open **http://localhost:8081/**,
-click *Start chatting*, and open a second browser to talk to yourself.
+### Start Shush
 
-`SHUSH_JWT_SECRET` has an obviously-fake default in the compose overlay and *nowhere else* — the
-application itself has none, so a real deployment fails to start rather than signing tokens with a
-value anyone reading this repository already knows.
+```bash
+cp .env.example .env          # the ten values marked `# shared` must match the platform's
+docker compose --env-file .env -f compose.platform.yaml up -d --build
+```
+
+Then **http://localhost:8081/**. Click *Start chatting*, and open a **private window or a second
+browser** for the other person — two tabs of one browser share `localStorage`, so they are the
+same account and matching correctly refuses to pair someone with themselves.
+
+nginx resolves upstream hostnames once at startup, so after rebuilding the replicas:
+`docker compose --env-file .env -f edge/compose.yaml restart nginx`.
 
 ### Tests
 
@@ -454,18 +487,18 @@ value anyone reading this repository already knows.
 cd api && ./mvnw clean verify
 ```
 
-169 integration tests and 11 unit tests against real infrastructure. First run pulls container
-images, including a browser.
+170 integration tests and 11 unit tests against real infrastructure, started and thrown away by
+Testcontainers — they do not use the platform stacks and need nothing running. First run pulls
+container images, including a browser.
+
+**Stop the platform stacks first on a small machine.** The suite starts six containers of its
+own, one of which is Chrome, and needs roughly 3 GB. With the platform's twelve already running
+there is not enough left, and the failure is an opaque `ExceptionInInitializerError` from a
+container that could not start rather than anything resembling out-of-memory.
 
 ### The harness
 
 ```bash
-# the dev endpoint lets the harness open conversations without going through matching;
-# it is off by default so an ordinary run cannot be driven this way
-SHUSH_DEV_ENDPOINTS=true docker compose -f compose.yaml -f compose.replicas.yaml \
-  --profile full up -d --build
-docker compose -f compose.yaml -f compose.replicas.yaml --profile core restart nginx
-
 cd bench && ./mvnw clean package && cd ..
 
 java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
@@ -475,102 +508,19 @@ java -jar bench/target/shush-bench.jar --mode=chaos --via=nginx \
      --kill-node=api-2 --at-second=15 --conversations=50 --messages=500
 ```
 
-Both exit 0 only if every invariant held. Chaos mode leaves the replica dead; bring it back with
-`docker compose ... up -d` before the next run.
-
-### Testing it with a second person
-
-The client is served by the API, so there is no separate frontend to start. Open
-http://localhost:8081/ in one browser and a **private window or a different browser** for the
-second person — two tabs of the same browser share `localStorage`, so they are the same account
-and matching will correctly refuse to pair someone with themselves.
-
-To reach it from a phone on the same network, bind the port beyond loopback deliberately:
-
-```bash
-NGINX_BIND=0.0.0.0 docker compose -f compose.yaml -f compose.replicas.yaml \
-  --profile full up -d
-```
-
-On WSL2 in its default NAT mode that is still not enough — the port lives in the VM, not on the
-Windows host's LAN interface. Either switch WSL to mirrored networking (`networkingMode=mirrored`
-in `%USERPROFILE%\.wslconfig`, then `wsl --shutdown`), or add a port proxy from an Administrator
-PowerShell. The client derives its WebSocket URL from `location.host`, so it works from a LAN
-address unchanged.
-
-### Credentials
-
-Every service requires a password. Defaults live in `compose.yaml` so a clean clone still runs
-with one command; `.env` overrides them on your machine. `.env.example` is the committed key list.
-
-```bash
-cp .env.example .env      # then fill it in, or leave it out entirely and use the defaults
-```
-
-Two things that will catch you out:
-
-- **Postgres and Elasticsearch only read their password when the volume is first created.**
-  Changing it later does nothing to an existing volume. Change it in place instead of wiping
-  your data:
-  ```bash
-  docker compose -f compose.yaml exec postgres \
-    psql -U shush -d shush -c "ALTER USER shush PASSWORD 'new-password'"
-  ```
-- **Redpanda seeds its SASL superuser only on a fresh cluster.** On a pre-existing volume, create
-  it once:
-  ```bash
-  docker compose -f compose.yaml exec redpanda \
-    rpk security user create shush -p 'your-password' --mechanism SCRAM-SHA-256
-  ```
-
-### On the shared platform
-
-For a box running several apps, `compose.platform.yaml` brings up only the three replicas and
-joins them to shared infrastructure owned by
-[`syamdev-platform`](https://github.com/Syam-SriBalaji-T/syamdev-platform) — one Postgres with a
-database per tenant, one Redpanda with prefix-scoped ACLs, one Elasticsearch with prefix-scoped
-roles, one MinIO bucket, and a Redis instance of its own.
-
-```bash
-# in syamdev-platform, once
-./bootstrap.sh
-docker compose --env-file ../secrets.env -f data/compose.yaml      up -d
-docker compose --env-file ../secrets.env -f streaming/compose.yaml up -d
-docker compose --env-file ../secrets.env -f search/compose.yaml    up -d
-docker compose --env-file ../secrets.env -f edge/compose.yaml      up -d
-
-# here
-docker compose --env-file ../secrets.env -f compose.platform.yaml up -d --build
-```
-
-The standalone files above still work unchanged, and that is deliberate: a reviewer must be able
-to clone this repo and run everything without knowing a platform exists, and a deployment must
-be able to share infrastructure with other apps. Those are different jobs, so they are different
-files rather than one compromise.
-
-On the platform the topic becomes `shush.chat.messages`, the consumer group `shush.chat-writer`
-and the search index `shush-waiting` — all configurable, because the ACLs only grant the tenant
-its own prefix. The guarantee is unchanged; only the names are namespaced.
-
-### Development
-
-Infrastructure in Docker, the application on the host so a debugger attaches:
-
-```bash
-cp .env.example .env                                    # set SHUSH_JWT_SECRET
-docker compose -f compose.yaml --profile full up -d
-cd api && ./mvnw spring-boot:run                        # :8080
-```
+Both exit 0 only if every invariant held. Needs `SHUSH_DEV_ENDPOINTS=true` in `.env` so the
+harness can open conversations without going through matching; it is off by default. Chaos mode
+leaves the replica dead — bring it back with `docker compose --env-file .env -f
+compose.platform.yaml up -d`.
 
 ### Metrics
 
 ```bash
-docker compose -f compose.yaml -f compose.replicas.yaml -f compose.observability.yaml \
-  --profile full up -d
+cd syamdev-observability && docker compose --env-file .env -f compose.yaml up -d
 ```
 
-Grafana on :3001, Prometheus on :9090, scraping each replica separately — an aggregate would hide
-the thing worth seeing, which is whether load is actually spread across replicas.
+Grafana on :3001, Prometheus on :9090. Targets are discovered from Docker labels, so that repo
+knows nothing about this one.
 
 ---
 
@@ -582,6 +532,7 @@ the thing worth seeing, which is whether load is actually spread across replicas
 | `docs/pre-plan.md` | Every product behaviour, in plain English |
 | `docs/plan.md` | Data model, mechanisms, phases, exit criteria |
 | `docs/deploy.md` | Hosting, cost, benchmark procedure, nginx changes |
+| `docs/implementation.md` | **What was actually built**, and every divergence from the plan |
 | `bench/results/` | Raw harness output, hardware, and how to reproduce it |
 
 ---
@@ -596,9 +547,12 @@ smallest reasonable choice, not a considered preference.
 - **Postgres publishes on host port `55432`, not `5432`.** The development machine runs a native
   Postgres bound to `0.0.0.0:5432`, which prevents Docker binding loopback `5432` at all. The
   container-side port is unchanged and `POSTGRES_PORT` overrides it.
-- **The reviewer's command names both compose files.** `plan.md` §9 says `docker compose --profile
-  full up`, but §4 requires `compose.yaml` to contain infrastructure only; both cannot hold
-  verbatim. R7 is satisfied by a single, longer command.
+- **Infrastructure moved out of this repo entirely**, to `syamdev-platform` and
+  `syamdev-observability`, once the box stopped hosting only this app. That gives up R7 knowingly:
+  see §8.
+- **Topic, consumer group and search index are configurable** and tenant-prefixed on the
+  platform, because a shared broker and cluster only grant a tenant its own prefix. Defaults keep
+  the standalone names.
 - **nginx listens on 8081**, so the replica stack and a host-run `spring-boot:run` can be up
   together.
 - **Replica containers have an explicit 1 GB memory limit and the JVM takes 60% of it.**

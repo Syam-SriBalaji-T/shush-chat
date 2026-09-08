@@ -87,14 +87,6 @@ spring:
       # which is the in-process half of the ordering guarantee.
       concurrency: ${SHUSH_KAFKA_CONCURRENCY:12}
 
-  docker:
-    compose:
-      file: ../compose.yaml
-      profiles:
-        active: core
-      # Leave infrastructure running between app restarts.
-      lifecycle-management: start-only
-
 server:
   port: ${SHUSH_PORT:8080}
   shutdown: graceful
@@ -124,7 +116,7 @@ management:
           include: readinessState, db, redis
 
 shush:
-  # Blank means "generate one". Set per replica in compose.replicas.yaml so a run can be shown
+  # Blank means "generate one". Set per replica in compose.platform.yaml so a run can be shown
   # to have genuinely spanned nodes.
   node-id: ${SHUSH_NODE_ID:}
   kafka-auth:

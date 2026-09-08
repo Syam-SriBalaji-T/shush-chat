@@ -1,5 +1,10 @@
 # Shush — Implementation Plan
 
+> **STATUS: this is the plan, not the record.** All eight phases are complete. What was actually
+> built, and where it diverged from this document, is in **[`implementation.md`](implementation.md)**
+> — read that first. This file is kept as written so the plan and the outcome can be compared;
+> only sections that would actively mislead have been corrected, each marked *(updated)*.
+>
 > **For any agent or developer picking this up cold.** This document plus `aim.md`,
 > `pre-plan.md` and `deploy.md` should be everything needed to build Shush end to end
 > without asking the owner product questions.
@@ -41,18 +46,18 @@
 6. **Never weaken a test to make it pass.** If the invariant harness fails, the system is
    wrong, not the harness.
 
-### 0.3 Current state
+### 0.3 Current state *(updated)*
 
-Nothing is implemented. The repository contains only `docs/`:
+**All eight phases are complete.** See [`implementation.md`](implementation.md) for what exists,
+the test counts, and every divergence from this plan.
 
-```
-shush-chat/
-└── docs/
-    ├── aim.md          Why the project exists; locked technical decisions + rationale
-    ├── pre-plan.md     Plain-English feature spec and user journey
-    ├── deploy.md       Hosting, cost, benchmark procedure, nginx changes
-    └── plan.md         This file
-```
+Infrastructure has since moved to two sibling repositories — `syamdev-platform` (Postgres, Redis,
+Redpanda, Elasticsearch, MinIO, nginx) and `syamdev-observability` (Prometheus, Grafana) — because
+this is no longer the only application that will run on the box. This repository now contains the
+application, the harness, the client and the docs. The layout in §4 below describes the original
+single-repo plan.
+
+*Originally, and for the record:* nothing was implemented; the repository contained only `docs/`.
 
 Environment notes (see `deploy.md` §1 and the Docker section):
 - Dev machine: Windows + WSL2, 8 cores, WSL capped at 6 GB (raise to 10 GB before Phase 4)
@@ -401,7 +406,13 @@ skip this tick — never queue.
 
 ---
 
-## 4. Repository layout
+## 4. Repository layout *(updated — see note)*
+
+> The tree below is the original single-repo plan. `compose.yaml`, `compose.replicas.yaml`,
+> `compose.observability.yaml` and `infra/` no longer live here; they moved to
+> `syamdev-platform` and `syamdev-observability`. This repo gained `compose.platform.yaml`
+> (three stateless replicas, no infrastructure) and `docs/implementation.md`. Everything under
+> `api/`, `bench/` and `web/` is as planned.
 
 ```
 shush-chat/
@@ -715,7 +726,8 @@ precisely the behaviour a mock removes. Every bug fixed gets a regression test f
 
 ## 9. Definition of done
 
-1. `git clone && docker compose --profile full up` works on a clean machine.
+1. ~~`git clone && docker compose --profile full up` works on a clean machine.~~ *(updated:
+   superseded by the platform split — see `implementation.md`)*
 2. `./mvnw clean verify` is green.
 3. The chaos harness exits 0.
 4. The README has all eight sections from `aim.md` §2.1, and every number traces to a

@@ -1,7 +1,8 @@
 # Shush harness results
 
 Captured 2026-09-05T18:15:11Z by running the committed harness against a stack
-brought up from a clean clone with 'docker compose --profile full up -d --build'.
+brought up from a clean clone. These predate the platform split; the topology (3 replicas
+behind nginx, one Postgres, one Redpanda, one Elasticsearch, one MinIO) is unchanged by it.
 
 ## Hardware and method
 
@@ -19,11 +20,11 @@ load driver   same machine as the system under test
 ## How to reproduce
 
 ```bash
-docker compose -f compose.yaml -f compose.replicas.yaml \
-  --profile full up -d --build
+# platform stacks first (syamdev-platform): data, streaming, search, edge
+docker compose --env-file .env -f compose.platform.yaml up -d --build
 
 # nginx resolves upstreams once at startup, so restart it after the replicas are recreated
-docker compose -f compose.yaml -f compose.replicas.yaml --profile core restart nginx
+docker compose --env-file .env -f edge/compose.yaml restart nginx   # in syamdev-platform
 
 cd bench && ./mvnw clean package && cd ..
 java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
