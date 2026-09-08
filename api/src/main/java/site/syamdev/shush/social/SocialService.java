@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import site.syamdev.shush.common.AfterCommit;
 import site.syamdev.shush.common.ApiException;
 import site.syamdev.shush.conversation.Conversation;
 import site.syamdev.shush.conversation.ConversationService;
@@ -86,7 +87,11 @@ public class SocialService {
 
         // Somebody wants this conversation kept, so it is no longer scheduled for deletion.
         conversations.cancelPurge(conversationId);
-        backplane.publish(toUserId, new ServerFrame.FriendRequested(conversationId, request.getId(), fromUserId));
+        // After the commit, not before it. The recipient's client answers this frame by
+        // re-reading /api/friend-requests, and that read beats an uncommitted insert -- the
+        // request is delivered, handled, and shows nothing.
+        AfterCommit.run(() -> backplane.publish(toUserId,
+                new ServerFrame.FriendRequested(conversationId, request.getId(), fromUserId)));
         return request;
     }
 
@@ -103,9 +108,11 @@ public class SocialService {
         conversations.keep(request.getConversationId());
 
         // Only the sender is told, and only about acceptance. That asymmetry is deliberate.
-        backplane.publish(request.getFromUserId(),
+        // After the commit for the same reason as above: the sender reloads their friends list
+        // when this arrives, and the friendship row has to exist by then.
+        AfterCommit.run(() -> backplane.publish(request.getFromUserId(),
                 new ServerFrame.FriendRequestAccepted(request.getConversationId(), request.getId(),
-                        request.getToUserId()));
+                        request.getToUserId())));
     }
 
     /**
