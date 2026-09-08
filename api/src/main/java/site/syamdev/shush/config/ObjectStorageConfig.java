@@ -36,10 +36,15 @@ class ObjectStorageConfig {
                 .build();
     }
 
+    /**
+     * Signs URLs for the browser, not for this application, so it is built on the public
+     * endpoint rather than the internal one. Those differ everywhere the app and the browser
+     * are not on the same network -- which is every containerised deployment.
+     */
     @Bean
     S3Presigner s3Presigner(StorageProperties properties) {
         return S3Presigner.builder()
-                .endpointOverride(URI.create(properties.endpoint()))
+                .endpointOverride(URI.create(properties.publicEndpoint()))
                 .region(Region.of(properties.region()))
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())))

@@ -148,6 +148,10 @@ shush:
     tick: 500ms
   storage:
     endpoint: ${SHUSH_S3_ENDPOINT:http://localhost:9000}
+    # Where the BROWSER should send the bytes. Defaults to the same host, which is right when
+    # the app runs outside a container; in Docker it must be the published address, because a
+    # presigned URL is signed for its host and "minio:9000" resolves nowhere in a browser.
+    public-endpoint: ${SHUSH_S3_PUBLIC_ENDPOINT:${SHUSH_S3_ENDPOINT:http://localhost:9000}}
     region: ${SHUSH_S3_REGION:us-east-1}
     bucket: ${SHUSH_S3_BUCKET:shush-media}
     access-key: ${SHUSH_S3_ACCESS_KEY:shushadmin}

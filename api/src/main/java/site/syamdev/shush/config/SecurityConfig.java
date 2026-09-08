@@ -10,6 +10,8 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -45,6 +47,40 @@ class SecurityConfig {
     @Bean
     PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * Accepts the JWT in a {@code token} query parameter, but only for reading media.
+     *
+     * <p>An {@code <img src>} cannot set an Authorization header -- the same constraint that
+     * puts the token in the query string for the WebSocket handshake. Without this every image
+     * in the client renders as a broken icon behind a 401, which is exactly what happened: the
+     * upload worked, the message arrived, and the picture never appeared.
+     *
+     * <p>Scoped to this one path rather than switched on globally. A token in a URL ends up in
+     * access logs, {@code Referer} headers and browser history, so it is worth exactly one
+     * endpoint that cannot work any other way -- and that endpoint returns a redirect to a
+     * short-lived storage URL rather than any bytes of its own.
+     */
+    @Bean
+    BearerTokenResolver bearerTokenResolver() {
+        DefaultBearerTokenResolver fromHeader = new DefaultBearerTokenResolver();
+        return request -> {
+            String header = fromHeader.resolve(request);
+            if (header != null) {
+                return header;
+            }
+            // Named "token" to match the websocket handshake, which already carries the JWT
+            // this way for the same reason. Spring's own query-parameter support is not reused
+            // because it reads RFC 6750's "access_token", and one name for one thing across
+            // this client is worth more than matching a spec nothing else here follows.
+            if (HttpMethod.GET.matches(request.getMethod())
+                    && request.getRequestURI().startsWith("/api/media/")) {
+                String token = request.getParameter("token");
+                return token == null || token.isBlank() ? null : token;
+            }
+            return null;
+        };
     }
 
     @Bean
