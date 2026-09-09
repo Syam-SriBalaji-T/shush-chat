@@ -191,11 +191,16 @@
       white-space: nowrap;
     }
 
+    /* One column until there is a sidebar to put in the other one. A hidden grid item is
+       removed from the grid entirely, so a fixed "272px 1fr" leaves an empty 272px track and
+       auto-places the stage into it -- which is why the landing page rendered squashed against
+       the left edge instead of centred. */
     main {
       display: grid;
-      grid-template-columns: 272px 1fr;
+      grid-template-columns: 1fr;
       min-height: 0;
     }
+    body.has-sidebar main { grid-template-columns: 272px 1fr; }
 
     /* ---------- sidebar ---------- */
 
@@ -264,6 +269,25 @@
     .request .row button { padding: 6px 13px; font-size: 13px; }
 
     .empty { color: var(--faint); font-size: 13px; margin: 2px 2px 0; }
+
+    /* Pushed to the bottom: it is the least urgent thing here and the most permanent, so it
+       should not sit between the friends list and the button people actually came for. */
+    #saveBox { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+
+    /* 2. unread count, on the friend it belongs to (pre-plan.md step 8). */
+    .unread {
+      flex: none;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--mine-b));
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+    }
 
     /* ---------- main column ---------- */
 
@@ -357,9 +381,40 @@
       border-radius: 16px 16px 5px 16px;
     }
     .msg img { max-width: 260px; border-radius: 10px; display: block; margin: 2px 0; }
-    .msg .seq { font-size: 10px; opacity: .5; margin-left: 8px; vertical-align: baseline; }
+
+    /* Time and delivery state, tucked under the text the way a chat app does it. */
+    .meta {
+      display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+      margin-top: 2px;
+      font-size: 10.5px;
+      opacity: .65;
+      white-space: nowrap;
+    }
+    .msg:not(.mine) .meta { justify-content: flex-start; }
+    .meta .seq { opacity: .7; }
+    .ticks { display: inline-flex; width: 15px; height: 11px; }
+    .ticks svg { width: 100%; height: 100%; }
+    /* Read is the only state with colour, so it is the only one anyone has to learn. */
+    .ticks[data-state="read"] { color: #53bdeb; opacity: 1; }
+    .ticks[data-state="pending"] { opacity: .55; }
 
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    /* Date separators and system events share one shape on purpose: both are the room
+       talking rather than a person, and a reader should not have to tell them apart. */
+    .daypill {
+      align-self: center;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      padding: 4px 14px;
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+    }
 
     .system {
       align-self: center;
@@ -383,6 +438,39 @@
 
     #typingIndicator { margin: 0 20px 8px; font-size: 12px; color: var(--muted); min-height: 16px; }
 
+    /* ---------- profile modal ---------- */
+
+    .backdrop {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(4, 5, 9, .62);
+      backdrop-filter: blur(3px);
+      display: grid; place-items: center;
+      padding: 20px;
+    }
+
+    .modal {
+      width: 100%; max-width: 360px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      text-align: center;
+      animation: rise .16s ease-out;
+    }
+    .modal .avatar { width: 68px; height: 68px; border-radius: 22px; font-size: 26px; margin: 0 auto 14px; }
+    .modal h3 { margin: 0 0 3px; font-size: 19px; }
+    .modal .sub { color: var(--faint); font-size: 13px; margin-bottom: 18px; }
+    .modal .actions { display: flex; flex-direction: column; gap: 8px; }
+    .danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+    .danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+    /* The name chip in the header is a button -- it opens your own profile. */
+    #displayName { cursor: pointer; }
+    #displayName:hover { border-color: var(--faint); color: var(--text); }
+
+    .peer-open { cursor: pointer; }
+
     /* Narrow screens: the sidebar becomes a strip above the conversation rather than
        disappearing, because the friends list is the only way back to an existing conversation. */
     @media (max-width: 760px) {
@@ -401,7 +489,7 @@
     <button id="home" type="button" title="Back to the start">
       <span class="mark">S</span><span class="word">Shush</span>
     </button>
-    <span class="chip" id="whoami" hidden></span>
+    <button class="chip" id="displayName" type="button" title="Your profile" hidden></button>
     <span class="spacer"></span>
     <span class="chip" id="nodeId" hidden></span>
     <button id="themeToggle" class="ghost" type="button">Light</button>
@@ -461,16 +549,7 @@
             <h2 class="section">What are you into?</h2>
             <div class="tiles" id="interestTiles"></div>
             <div class="row" style="margin-top: 10px;">
-              <button id="showOthers" class="ghost" type="button">Show others</button>
-            </div>
-          </div>
-
-          <div class="block">
-            <h2 class="section">Your name</h2>
-            <div class="row">
-              <strong id="displayName"></strong>
-              <button id="shuffleName" class="ghost" type="button">Shuffle</button>
-              <span class="muted" id="shuffleNote"></span>
+              <button id="showOthers" class="ghost" type="button">Show more</button>
             </div>
           </div>
 
@@ -496,8 +575,8 @@
       <!-- Chat -->
       <div id="chat" hidden>
         <div class="chat-head">
-          <div class="avatar" id="chatAvatar">?</div>
-          <div style="min-width: 0;">
+          <div class="avatar peer-open" id="chatAvatar" title="View profile">?</div>
+          <div style="min-width: 0;" class="peer-open" id="chatWho" title="View profile">
             <h2 id="chatHeading">Conversation</h2>
             <div id="chatSub"></div>
           </div>
@@ -518,6 +597,21 @@
       </div>
     </section>
   </main>
+
+  <!-- One modal for both cases: your own profile, and the person you are talking to. -->
+  <div class="backdrop" id="profileBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileName">
+      <div class="avatar" id="profileAvatar">?</div>
+      <h3 id="profileName"></h3>
+      <p class="sub" id="profileSub"></p>
+      <div class="actions">
+        <button id="shuffleName" class="ghost" type="button" hidden>Shuffle my name</button>
+        <span class="empty" id="shuffleNote"></span>
+        <button id="removeFriend" class="ghost danger" type="button" hidden>Remove friend</button>
+        <button id="closeProfile" class="ghost" type="button">Close</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -547,6 +641,13 @@
     signedIn: false,
     searching: false,
     friends: [],
+    // Highest seq the other person has read, so a tick can be blue rather than grey.
+    peerReadSeq: 0,
+    // My own messages that have not come back from the server yet, keyed by clientMsgId. An
+    // optimistic bubble is what makes a single tick mean anything: without one there is no
+    // message on screen until it is already delivered.
+    pending: new Map(),
+    lastRenderedDay: null,
     // The client's own guard against seeing a message twice. The server deduplicates writes;
     // this deduplicates *renders*, because a reconnect can legitimately redeliver.
     seenSeqs: new Set(),
@@ -624,6 +725,7 @@
     el("setup").hidden = name !== "setup";
     el("chat").hidden = name !== "chat";
     el("sidebar").hidden = !state.signedIn;
+    document.body.classList.toggle("has-sidebar", state.signedIn);
   };
 
   /**
@@ -669,10 +771,10 @@
     if (session.token) {
       rememberToken(session.token);
     }
-    el("whoami").textContent = session.user.displayName;
-    el("whoami").hidden = false;
     el("displayName").textContent = session.user.displayName;
+    el("displayName").hidden = false;
     el("saveBox").hidden = !session.user.anonymous;
+    document.body.classList.add("has-sidebar");
   };
 
   const startSession = async () => {
@@ -695,6 +797,13 @@
   /* ---------- interests ---------- */
 
   let allInterests = [];
+  let interestOrder = [];
+  let showingAllInterests = false;
+
+  // Five is enough to choose from without turning the first screen into a wall of tags, and
+  // anything already selected stays visible however the list is trimmed -- a hidden selection
+  // is worse than a long list.
+  const INTERESTS_SHOWN = 5;
 
   const renderInterests = (interests, selected) => {
     const tiles = el("interestTiles");
@@ -723,17 +832,37 @@
     el("findSomeone").disabled = state.selectedInterests.length === 0;
   };
 
+  const visibleInterests = () => {
+    if (showingAllInterests) {
+      return interestOrder;
+    }
+    const head = interestOrder.slice(0, INTERESTS_SHOWN);
+    const selectedButHidden = interestOrder.filter((interest) =>
+      state.selectedInterests.includes(interest.id) && !head.includes(interest));
+    return head.concat(selectedButHidden);
+  };
+
+  const paintInterests = () => {
+    renderInterests(visibleInterests(), state.selectedInterests);
+    el("showOthers").hidden = interestOrder.length <= INTERESTS_SHOWN;
+    el("showOthers").textContent = showingAllInterests ? "Show less" : "Show more";
+  };
+
   const loadInterests = async () => {
     const body = await (await api("/api/interests")).json();
     allInterests = body.all;
-    state.selectedInterests = body.fromHistory ? body.suggested.map((i) => i.id) : [];
-    renderInterests(body.suggested, state.selectedInterests);
+    // Suggestions first, then everything else, so the useful ones survive the trim.
+    const suggested = body.suggested || [];
+    interestOrder = suggested.concat(
+      allInterests.filter((interest) => !suggested.some((s) => s.id === interest.id)));
+    state.selectedInterests = body.fromHistory ? suggested.map((i) => i.id) : [];
+    paintInterests();
     el("findSomeone").disabled = state.selectedInterests.length === 0;
   };
 
   el("showOthers").addEventListener("click", () => {
-    renderInterests(allInterests, state.selectedInterests);
-    el("showOthers").hidden = true;
+    showingAllInterests = !showingAllInterests;
+    paintInterests();
   });
 
   el("shuffleName").addEventListener("click", async () => {
@@ -745,7 +874,8 @@
     const user = await response.json();
     state.displayName = user.displayName;
     el("displayName").textContent = user.displayName;
-    el("whoami").textContent = user.displayName;
+    el("profileName").textContent = user.displayName;
+    paintAvatar(el("profileAvatar"), state.userId, user.displayName);
     el("shuffleNote").textContent = "";
   });
 
@@ -787,6 +917,14 @@
       case "message":
         onMessage(frame);
         break;
+      case "ack": {
+        // "sent" means the broker took it; "delivered" means it is written and sequenced.
+        const waiting = state.pending.get(frame.clientMsgId);
+        if (waiting) {
+          setTicks(waiting, frame.status === "delivered" ? "delivered" : "sent");
+        }
+        break;
+      }
       case "typing":
         showTyping();
         break;
@@ -801,6 +939,7 @@
         break;
       case "read":
         el("chatHeading").dataset.readSeq = String(frame.seq);
+        markReadUpTo(frame.seq);
         break;
       case "friendRequested":
         // Straight into the sidebar, which is on screen whenever you are signed in. It used to
@@ -834,6 +973,9 @@
     state.peerName = peerName;
     state.seenSeqs = new Set();
     state.searching = false;
+    state.peerReadSeq = 0;
+    state.pending.clear();
+    state.lastRenderedDay = null;
     clearTimeout(searchHintTimer);
 
     el("messages").innerHTML = "";
@@ -869,6 +1011,15 @@
     el("addFriend").hidden = true;
     el("leave").hidden = true;
 
+    // How far they have read, before any history is drawn -- otherwise every message in the
+    // backlog renders grey and only turns blue if they happen to read something new.
+    const view = await api("/api/conversations/" + friend.conversationId);
+    if (view.ok) {
+      const conversation = await view.json();
+      state.peerReadSeq = Math.max(0, ...(conversation.others || [])
+        .map((participant) => participant.readCursorSeq || 0), 0);
+    }
+
     const response = await api(
       "/api/conversations/" + friend.conversationId + "/messages?limit=50");
     if (!response.ok) {
@@ -882,45 +1033,169 @@
     if (!history.messages.length) {
       addSystemLine("Nothing here yet. Say something.");
     }
+    // Opening the thread is the moment it is read, and the backlog was rendered with announce
+    // off, so the newest seq has to be acknowledged explicitly.
+    const newest = history.messages[history.messages.length - 1];
+    if (newest) {
+      sendFrame({type: "read", conversationId: friend.conversationId, seq: newest.seq});
+    }
+    await loadFriends();
     scrollMessages();
   };
 
+  const TICKS = {
+    pending: '<svg viewBox="0 0 16 11" fill="none"><circle cx="8" cy="5.5" r="4.4" stroke="currentColor" stroke-width="1.2"/><path d="M8 3.2v2.5l1.7 1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
+    sent: '<svg viewBox="0 0 16 11" fill="none"><path d="M1.5 6.2l3 3L11 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    delivered: '<svg viewBox="0 0 16 11" fill="none"><path d="M1 6.2l3 3L10.5 2.2M6.2 9.2L12.7 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+  TICKS.read = TICKS.delivered;
+
+  const clockTime = (value) => new Date(value).toLocaleTimeString([],
+    {hour: "2-digit", minute: "2-digit"});
+
+  /**
+   * "Today", "Yesterday", then a real date -- the labels people actually use, and the reason
+   * this compares calendar days rather than elapsed hours. A message at 00:10 and one at 23:50
+   * the previous evening are forty minutes apart and still belong under different headings.
+   */
+  const dayLabel = (value) => {
+    const then = new Date(value);
+    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((midnight(new Date()) - midnight(then)) / 86400000);
+    if (days === 0) {
+      return "Today";
+    }
+    if (days === 1) {
+      return "Yesterday";
+    }
+    return then.toLocaleDateString([], days < 7
+      ? {weekday: "long"}
+      : {day: "numeric", month: "long", year: "numeric"});
+  };
+
+  const dayKeyOf = (value) => new Date(value).toDateString();
+
+  const separateDay = (createdAt) => {
+    const key = dayKeyOf(createdAt);
+    if (key === state.lastRenderedDay) {
+      return;
+    }
+    state.lastRenderedDay = key;
+    const pill = document.createElement("div");
+    pill.className = "daypill";
+    pill.textContent = dayLabel(createdAt);
+    el("messages").appendChild(pill);
+  };
+
+  const setTicks = (bubble, tickState) => {
+    const ticks = bubble.querySelector(".ticks");
+    if (!ticks) {
+      return;
+    }
+    // Never walk backwards: a redelivered frame must not turn a blue tick grey again.
+    const rank = {pending: 0, sent: 1, delivered: 2, read: 3};
+    if (rank[tickState] <= rank[ticks.dataset.state]) {
+      return;
+    }
+    ticks.dataset.state = tickState;
+    ticks.innerHTML = TICKS[tickState];
+  };
+
+  const buildBubble = (mine) => {
+    const bubble = document.createElement("div");
+    bubble.className = "msg" + (mine ? " mine" : "");
+    return bubble;
+  };
+
+  const fillBubble = (bubble, frame, mine) => {
+    bubble.dataset.seq = frame.seq == null ? "" : String(frame.seq);
+
+    const body = document.createElement("div");
+    if (frame.kind === "image" && frame.mediaKey) {
+      const image = document.createElement("img");
+      image.alt = "shared image";
+      image.src = mediaUrl(frame.mediaKey);
+      body.appendChild(image);
+    } else {
+      body.appendChild(document.createTextNode(frame.body));
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    if (frame.seq != null) {
+      const seq = document.createElement("span");
+      seq.className = "seq";
+      seq.textContent = "#" + frame.seq;
+      meta.appendChild(seq);
+    }
+    const time = document.createElement("span");
+    time.textContent = clockTime(frame.createdAt || Date.now());
+    meta.appendChild(time);
+    if (mine) {
+      const ticks = document.createElement("span");
+      ticks.className = "ticks";
+      ticks.dataset.state = "pending";
+      ticks.innerHTML = TICKS.pending;
+      meta.appendChild(ticks);
+    }
+
+    bubble.replaceChildren(body, meta);
+  };
+
   const renderMessage = (frame, announce = true) => {
+    const mine = frame.senderId === state.userId;
+
+    // A message of mine already on screen from the optimistic send: fill in what the server
+    // decided (its seq, its real timestamp) rather than drawing a second copy of it.
+    const optimistic = frame.clientMsgId ? state.pending.get(frame.clientMsgId) : null;
+    if (optimistic) {
+      state.pending.delete(frame.clientMsgId);
+      state.seenSeqs.add(frame.seq);
+      fillBubble(optimistic, frame, true);
+      setTicks(optimistic, frame.seq <= state.peerReadSeq ? "read" : "delivered");
+      return;
+    }
+
     if (state.seenSeqs.has(frame.seq)) {
       return;
     }
     state.seenSeqs.add(frame.seq);
 
-    const bubble = document.createElement("div");
-    bubble.className = "msg" + (frame.senderId === state.userId ? " mine" : "");
-    bubble.dataset.seq = String(frame.seq);
-
-    if (frame.kind === "image" && frame.mediaKey) {
-      const image = document.createElement("img");
-      image.alt = "shared image";
-      image.src = mediaUrl(frame.mediaKey);
-      bubble.appendChild(image);
-    } else {
-      bubble.appendChild(document.createTextNode(frame.body));
+    separateDay(frame.createdAt || Date.now());
+    const bubble = buildBubble(mine);
+    fillBubble(bubble, frame, mine);
+    if (mine) {
+      setTicks(bubble, frame.seq <= state.peerReadSeq ? "read" : "delivered");
     }
-
-    const seq = document.createElement("span");
-    seq.className = "seq";
-    seq.textContent = "#" + frame.seq;
-    bubble.appendChild(seq);
-
     el("messages").appendChild(bubble);
 
-    if (announce && frame.senderId !== state.userId) {
+    // Only if the conversation is actually on screen. Acknowledging a read from a hidden view
+    // is a lie to the sender and it zeroes your own unread count, so a message that arrived
+    // while you were elsewhere would never be counted as waiting for you.
+    if (announce && !mine && chatIsOnScreen()) {
       sendFrame({type: "read", conversationId: state.conversationId, seq: frame.seq});
     }
+  };
+
+  /** Everything of mine up to `seq` has been read by the other person. */
+  const markReadUpTo = (seq) => {
+    state.peerReadSeq = Math.max(state.peerReadSeq, seq);
+    el("messages").querySelectorAll(".msg.mine").forEach((bubble) => {
+      const at = Number(bubble.dataset.seq);
+      if (bubble.dataset.seq && at <= state.peerReadSeq) {
+        setTicks(bubble, "read");
+      }
+    });
   };
 
   const onMessage = (frame) => {
     // A frame for a conversation that is not on screen belongs to a friend we are not looking
     // at. Nothing is lost by not rendering it: the history load picks it up when that thread
     // is opened, because the database is the record and this list is only a view of it.
-    if (frame.conversationId !== state.conversationId) {
+    if (frame.conversationId !== state.conversationId || !chatIsOnScreen()) {
+      // Not on screen, so it is waiting for you: re-read the list to pick up the count the
+      // server has been keeping. Nothing is lost by not rendering -- the history load draws it
+      // when the thread is opened, because the database is the record and this is only a view.
       loadFriends();
       return;
     }
@@ -940,6 +1215,8 @@
   const mediaUrl = (key) => "/api/media/"
     + String(key).split("/").map(encodeURIComponent).join("/")
     + "?token=" + encodeURIComponent(state.jwt);
+
+  const chatIsOnScreen = () => !el("chat").hidden;
 
   const scrollMessages = () => {
     el("messages").scrollTop = el("messages").scrollHeight;
@@ -967,14 +1244,19 @@
     if (!body || !state.conversationId) {
       return;
     }
-    sendFrame({
-      type: "send",
-      conversationId: state.conversationId,
-      // Generated here and reused on retry, so the server's dedup constraint can do its job.
-      clientMsgId: newId(),
-      kind: "text",
-      body,
-    });
+    // Generated here and reused on retry, so the server's dedup constraint can do its job.
+    const clientMsgId = newId();
+
+    // On screen immediately, with no seq and no time from the server yet. This is what a
+    // single tick is for: it says the message exists here and nowhere else yet.
+    separateDay(Date.now());
+    const bubble = buildBubble(true);
+    fillBubble(bubble, {body, kind: "text", createdAt: Date.now(), seq: null}, true);
+    el("messages").appendChild(bubble);
+    state.pending.set(clientMsgId, bubble);
+    scrollMessages();
+
+    sendFrame({type: "send", conversationId: state.conversationId, clientMsgId, kind: "text", body});
     el("composer").value = "";
   };
 
@@ -1137,6 +1419,16 @@
       who.append(name, sub);
 
       button.append(avatar, who);
+      // Hidden only while that conversation is actually on screen. "The open one" is not the
+      // same as "the last one opened" -- after going home the thread is still selected, and
+      // suppressing the badge on that basis hides exactly the count you came back to see.
+      const onScreenNow = chatIsOnScreen() && friend.conversationId === state.conversationId;
+      if (friend.unreadCount > 0 && !onScreenNow) {
+        const badge = document.createElement("span");
+        badge.className = "unread";
+        badge.textContent = friend.unreadCount > 99 ? "99+" : String(friend.unreadCount);
+        button.appendChild(badge);
+      }
       button.addEventListener("click", () => openFriend(friend));
       item.appendChild(button);
       list.appendChild(item);
@@ -1196,6 +1488,79 @@
       list.appendChild(item);
     });
   };
+
+  /* ---------- profile ---------- */
+
+  const openProfile = (options) => {
+    paintAvatar(el("profileAvatar"), options.userId, options.name);
+    el("profileName").textContent = options.name || "Someone";
+    el("profileSub").textContent = options.sub || "";
+    el("shuffleName").hidden = !options.mine;
+    el("shuffleNote").textContent = "";
+    // Only offered for somebody you have actually kept.
+    el("removeFriend").hidden = !options.friend;
+    el("removeFriend").dataset.userId = options.friend ? options.userId : "";
+    el("profileBackdrop").hidden = false;
+  };
+
+  const closeProfile = () => {
+    el("profileBackdrop").hidden = true;
+  };
+
+  el("displayName").addEventListener("click", () => openProfile({
+    userId: state.userId,
+    name: state.displayName,
+    sub: "This is you. Nobody sees anything else.",
+    mine: true,
+  }));
+
+  const openPeerProfile = () => {
+    if (!state.peerId) {
+      return;
+    }
+    const friend = state.friends.find((candidate) => candidate.userId === state.peerId);
+    openProfile({
+      userId: state.peerId,
+      name: friend ? friend.displayName : (state.peerName || "A stranger"),
+      sub: friend ? (friend.online ? "Online" : "Offline") : "You have not kept this person",
+      friend: Boolean(friend),
+    });
+  };
+
+  el("chatAvatar").addEventListener("click", openPeerProfile);
+  el("chatWho").addEventListener("click", openPeerProfile);
+  el("closeProfile").addEventListener("click", closeProfile);
+  el("profileBackdrop").addEventListener("click", (event) => {
+    if (event.target === el("profileBackdrop")) {
+      closeProfile();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeProfile();
+    }
+  });
+
+  /**
+   * Undoing a friendship, which is also the only way back to being matchable with that person:
+   * matching skips anyone you are already friends with, so without this two accounts that had
+   * kept each other could never be paired again.
+   */
+  el("removeFriend").addEventListener("click", async () => {
+    const userId = el("removeFriend").dataset.userId;
+    if (!userId) {
+      return;
+    }
+    const response = await api("/api/friends/" + userId, {method: "DELETE"});
+    closeProfile();
+    if (!response.ok) {
+      return;
+    }
+    await loadFriends();
+    if (state.peerId === userId) {
+      goHome();
+    }
+  });
 
   /* ---------- saving the account ---------- */
 
