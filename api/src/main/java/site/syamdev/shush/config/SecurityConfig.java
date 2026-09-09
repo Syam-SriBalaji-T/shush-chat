@@ -4,12 +4,16 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import site.syamdev.shush.cors.AllowedOrigins;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
@@ -22,6 +26,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import jakarta.servlet.DispatcherType;
 
 import javax.crypto.SecretKey;
+
+import java.time.Duration;
+import java.util.List;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 
@@ -83,9 +90,39 @@ class SecurityConfig {
         };
     }
 
+    /**
+     * CORS decided per request from the {@code cors_origins} table, so adding a frontend is a
+     * row rather than a redeploy.
+     *
+     * <p>Returning null for an origin that is not listed is how this refuses: Spring's CORS
+     * filter then rejects the request instead of answering it without the header, which is the
+     * difference between a clear 403 and a browser error nobody can explain.
+     */
+    @Bean
+    CorsConfigurationSource corsConfigurationSource(AllowedOrigins allowed) {
+        return request -> {
+            String origin = request.getHeader(HttpHeaders.ORIGIN);
+            if (!allowed.permits(origin)) {
+                return null;
+            }
+            CorsConfiguration configuration = new CorsConfiguration();
+            // The exact origin, never "*": credentials are not usable with a wildcard, and
+            // echoing only what was matched keeps the answer specific to the caller.
+            configuration.setAllowedOrigins(List.of(origin));
+            configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+            configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+            configuration.setMaxAge(Duration.ofMinutes(10));
+            return configuration;
+        };
+    }
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
+                // No argument: Spring Security picks up the bean named corsConfigurationSource
+                // above. Injecting it here instead is ambiguous, because Spring MVC's
+                // HandlerMappingIntrospector is also a CorsConfigurationSource.
+                .cors(Customizer.withDefaults())
                 // No cookies and no server-side session: every node must be able to serve
                 // every request, which is the same property that removes sticky sessions.
                 .csrf(csrf -> csrf.disable())
@@ -98,8 +135,6 @@ class SecurityConfig {
                         .requestMatchers("/api/auth/**", "/api/health", "/api/health/**").permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/interests").permitAll()
-                        // The single-file test client. It authenticates itself once it loads.
-                        .requestMatchers(HttpMethod.GET, "/", "/index.html", "/favicon.ico").permitAll()
                         // The handshake authenticates itself: the JWT arrives in the query
                         // string, which no Authorization-header filter can read.
                         .requestMatchers("/ws/**").permitAll()

@@ -13,7 +13,7 @@
 > **Generated — do not edit.** Change the schema by adding a migration under
 > `api/src/main/resources/db/migration/`, then run `cd api && ./mvnw verify`.
 
-Generated 2026-09-09 from 13 tables.
+Generated 2026-09-09 from 14 tables.
 
 ## Migrations applied
 
@@ -24,6 +24,7 @@ Generated 2026-09-09 from 13 tables.
 | `V3` | initial schema | yes |
 | `V4` | seed interests | yes |
 | `V5` | friend request declined | yes |
+| `V6` | cors origins | yes |
 
 ---
 
@@ -94,6 +95,18 @@ Generated 2026-09-09 from 13 tables.
 **Indexes**
 
 - `conversations_purge_after_idx` — `CREATE INDEX conversations_purge_after_idx ON public.conversations USING btree (purge_after) WHERE (purge_after IS NOT NULL)`
+
+### `cors_origins`
+
+| Column | Type | Null | Default |
+| --- | --- | --- | --- |
+| `origin` | `text` | no | — |
+| `note` | `text` | yes | — |
+| `created_at` | `timestamp with time zone` | no | `now()` |
+
+**Primary key**
+
+- `cors_origins_pkey` — `PRIMARY KEY (origin)`
 
 ### `device_tokens`
 
