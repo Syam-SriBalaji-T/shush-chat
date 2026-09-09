@@ -9,7 +9,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Collection;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class ConversationService {
@@ -94,7 +97,23 @@ public class ConversationService {
         }
     }
 
+    /**
+     * Unread counts for several conversations at once, keyed by conversation.
+     *
+     * <p>The friends list needs one of these per friend and must not do one query per friend
+     * to get them (pre-plan.md, step 8: the list shows how many messages are waiting from
+     * each person).
+     */
     @Transactional(readOnly = true)
+    public Map<UUID, Integer> unreadCountsFor(UUID userId, Collection<UUID> conversationIds) {
+        if (conversationIds.isEmpty()) {
+            return Map.of();
+        }
+        return participants.findByUserIdAndConversationIdIn(userId, conversationIds).stream()
+                .collect(Collectors.toMap(ConversationParticipant::getConversationId,
+                        ConversationParticipant::getUnreadCount));
+    }
+
     public List<UUID> participantIds(UUID conversationId) {
         return participants.findByConversationId(conversationId).stream()
                 .map(ConversationParticipant::getUserId)

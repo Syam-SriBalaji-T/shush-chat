@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,14 @@ public interface ConversationParticipantRepository
         extends JpaRepository<ConversationParticipant, ConversationParticipant.Key> {
 
     List<ConversationParticipant> findByConversationId(UUID conversationId);
+
+    /**
+     * One query for a whole friends list. The count is a maintained column, never a COUNT(*)
+     * at read time -- that is the query that collapses first as conversations grow, and a
+     * friends list runs it once per friend.
+     */
+    List<ConversationParticipant> findByUserIdAndConversationIdIn(UUID userId,
+                                                                 Collection<UUID> conversationIds);
 
     boolean existsByConversationIdAndUserId(UUID conversationId, UUID userId);
 

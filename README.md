@@ -542,6 +542,26 @@ knows nothing about this one.
 Decisions taken by the implementer because the specification did not cover them. Each is the
 smallest reasonable choice, not a considered preference.
 
+**Removing a friend.** `pre-plan.md` says how you keep somebody and never how you stop. Left
+alone that is a dead end rather than an omission: matching skips anyone you are already friends
+with, so once two accounts had kept each other neither could ever be matched again — correct
+behaviour, with no way out of it. `DELETE /api/friends/{userId}` removes the friendship and
+nothing else; the conversation stays, because it still happened, and the retention job already
+owns deciding when a kept conversation stops being worth keeping. It lives behind the profile
+dialog rather than on the friends list, where it would be one stray click from permanent.
+
+**Changing your name.** Shuffling used to sit on the screen you pass through before every
+match, which made a new identity a single click away from anyone who had just been unpleasant
+under the old one — and `pre-plan.md` step 9 says a returning visitor gets the flow *minus the
+name step* anyway. It moved into the profile dialog. Nothing rate-limits it beyond the existing
+throttle, so this narrows the invitation rather than closing it.
+
+**Read state.** One tick means the broker accepted it, two mean it is written and sequenced,
+two in colour mean the other person's read cursor has passed it. That is the WhatsApp
+vocabulary mapped onto acks and cursors the server already had, rather than new state. A client
+only acknowledges a read while the conversation is actually on screen — acknowledging from a
+hidden view would both lie to the sender and zero your own unread count.
+
 **Infrastructure and running it**
 
 - **Postgres publishes on host port `55432`, not `5432`.** The development machine runs a native

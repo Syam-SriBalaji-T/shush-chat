@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import site.syamdev.shush.common.CurrentUser;
 import site.syamdev.shush.conversation.Conversation;
+import site.syamdev.shush.conversation.ConversationService;
 import site.syamdev.shush.presence.PresenceService;
 import site.syamdev.shush.user.User;
 import site.syamdev.shush.user.UserRepository;
@@ -31,13 +32,15 @@ class SocialController {
     private final SocialService social;
     private final PresenceService presence;
     private final UserRepository users;
+    private final ConversationService conversations;
     private final CurrentUser currentUser;
 
     SocialController(SocialService social, PresenceService presence, UserRepository users,
-                     CurrentUser currentUser) {
+                     ConversationService conversations, CurrentUser currentUser) {
         this.social = social;
         this.presence = presence;
         this.users = users;
+        this.conversations = conversations;
         this.currentUser = currentUser;
     }
 
@@ -77,6 +80,8 @@ class SocialController {
         Map<UUID, Boolean> online = presence.onlineAmong(friendIds);
         Map<UUID, User> byId = users.findAllById(friendIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
+        Map<UUID, Integer> unread = conversations.unreadCountsFor(callerId,
+                friendships.stream().map(Friendship::getConversationId).toList());
 
         return friendships.stream().map(friendship -> {
             UUID friendId = friendship.otherThan(callerId);
@@ -85,8 +90,15 @@ class SocialController {
                     friend == null ? null : friend.getDisplayName(),
                     friendship.getConversationId(),
                     Boolean.TRUE.equals(online.get(friendId)),
-                    friend == null ? null : friend.getLastSeenAt());
+                    friend == null ? null : friend.getLastSeenAt(),
+                    unread.getOrDefault(friendship.getConversationId(), 0));
         }).toList();
+    }
+
+    /** Undoes keeping somebody, which also makes them matchable again. */
+    @DeleteMapping("/friends/{userId}")
+    void unfriend(@PathVariable UUID userId) {
+        social.unfriend(currentUser.requireId(), userId);
     }
 
     @PostMapping("/blocks/{userId}")
@@ -132,7 +144,7 @@ class SocialController {
     }
 
     record FriendView(UUID userId, String displayName, UUID conversationId, boolean online,
-                      Instant lastSeenAt) {
+                      Instant lastSeenAt, int unreadCount) {
     }
 
     record InviteView(String code, Instant expiresAt) {}

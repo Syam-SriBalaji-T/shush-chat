@@ -132,6 +132,24 @@ public class SocialService {
         return requests.findByToUserIdAndStatus(userId, FriendRequest.Status.PENDING.wireValue());
     }
 
+    /**
+     * Undoes keeping somebody.
+     *
+     * <p>Not in pre-plan.md, and added because its absence was a dead end: matching skips
+     * anyone you are already friends with, so once two accounts had kept each other there was
+     * no way for either of them to be matched again -- correct behaviour with no way out of it.
+     *
+     * <p>The conversation is left alone. It stops being a friendship, not a thing that
+     * happened, and the retention job already owns deciding when a kept conversation is no
+     * longer worth keeping.
+     */
+    @Transactional
+    public void unfriend(UUID actingUserId, UUID otherUserId) {
+        if (friendships.deleteBetween(actingUserId, otherUserId) == 0) {
+            throw ApiException.badRequest("not_friends", "you are not friends with that person");
+        }
+    }
+
     @Transactional(readOnly = true)
     public List<Friendship> friendshipsOf(UUID userId) {
         return friendships.findAllInvolving(userId);
