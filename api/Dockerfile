@@ -8,8 +8,6 @@ WORKDIR /build
 COPY api/pom.xml .
 RUN mvn -B -q dependency:go-offline
 
-# The build copies web/ into the jar's static resources, so it has to be present.
-COPY web ../web
 COPY api/src ./src
 RUN mvn -B -q clean package -DskipTests
 

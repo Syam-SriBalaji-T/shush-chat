@@ -484,12 +484,18 @@ nginx resolves upstream hostnames once at startup, so after rebuilding the repli
 ### Tests
 
 ```bash
-cd api && ./mvnw clean verify
+cd api && ./mvnw clean verify      # 173 tests, real infrastructure, nothing needs to be running
+cd web && npm test                 # the browser journey, against a stack that IS running
 ```
 
-170 integration tests and 11 unit tests against real infrastructure, started and thrown away by
-Testcontainers — they do not use the platform stacks and need nothing running. First run pulls
-container images, including a browser.
+The Java suite runs against real Postgres, Redis, Redpanda, Elasticsearch and MinIO, started and
+thrown away by Testcontainers. It needs nothing up.
+
+The browser journey moved to Playwright in `web/` when the frontend became its own container.
+That is a real trade: `./mvnw verify` used to drive the client end to end because the client was
+a single HTML file the API served itself, and it no longer can. `npm test` covers the same
+journey — matching, both directions, images that actually load, requests visible to the
+recipient, unread counts, ticks — but only against a stack that is already up.
 
 **Stop the platform stacks first on a small machine.** The suite starts six containers of its
 own, one of which is Chrome, and needs roughly 3 GB. With the platform's twelve already running
@@ -534,6 +540,33 @@ knows nothing about this one.
 | `docs/deploy.md` | Hosting, cost, benchmark procedure, nginx changes |
 | `docs/implementation.md` | **What was actually built**, and every divergence from the plan |
 | `bench/results/` | Raw harness output, hardware, and how to reproduce it |
+
+### The frontend
+
+`web/` is a Next.js app in its own container. nginx serves it at `/` and proxies `/api` and
+`/ws` to the API replicas, so the browser only ever sees one origin and nothing in the normal
+path is cross-origin at all.
+
+The landing page is a server component — real HTML before any JavaScript runs. Everything past
+it is a live websocket and a session token held in this browser, which is client-side by
+nature; rendering it on a server would be pretending.
+
+Running the frontend on its own, against the same API:
+
+```bash
+cd web && npm install && npm run dev        # http://localhost:3000
+```
+
+That port *is* a different origin, which is what `cors_origins` is for — the two `localhost:3000`
+rows are already there. Adding another frontend is one row:
+
+```sql
+INSERT INTO cors_origins (origin, note) VALUES ('https://example.com', 'why');
+```
+
+No redeploy: the set is re-read every 15 seconds. An empty table permits no cross-origin browser
+call at all, which is the right default given the app and API share an origin in the deployed
+stack.
 
 ---
 

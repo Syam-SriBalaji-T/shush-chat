@@ -118,6 +118,33 @@ services:
       data:
         aliases: [shush-api-3]
 
+  # The frontend. Its own container and its own image, because it is a Node server with a
+  # different build, a different runtime and a different reason to be redeployed.
+  #
+  # No published port: nginx serves it at / and proxies /api and /ws to the replicas above, so
+  # the browser only ever sees one origin. That is what makes CORS a non-issue in the normal
+  # path -- the cors_origins table is for `next dev`, which really does run somewhere else.
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Empty: the browser calls the origin it was served from.
+        NEXT_PUBLIC_API_BASE: ""
+    image: shush-web:local
+    restart: unless-stopped
+    depends_on:
+      api-1:
+        condition: service_healthy
+    networks:
+      edge:
+        aliases: [shush-web]
+    expose: ["3000"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
 networks:
   edge:
     name: syamdev-edge

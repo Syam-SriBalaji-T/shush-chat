@@ -4,7 +4,7 @@ Real-time 1:1 chat. Strangers are matched on shared interests, talk, and can kee
 each other as friends. **This is a portfolio/interview artifact, not a product** —
 when a decision trades product value for demonstrable engineering depth, take the depth.
 
-`api/` Java 21 + Spring Boot 3 (MVC on virtual threads) · `web/` single-file test client
+`api/` Java 21 + Spring Boot 3 (MVC on virtual threads) · `web/` Next.js frontend
 · `bench/` load + invariant harness · Postgres · Redis · Redpanda · Elasticsearch · MinIO
 
 Build: **Maven** (`./mvnw`, the committed wrapper — never system `mvn`).

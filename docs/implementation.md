@@ -126,6 +126,11 @@ Each was invisible to code review and would have shipped.
 | 14 | The presigned upload URL was signed for `minio:9000` — a host no browser can resolve | browser test |
 | 15 | Single-quoting `.env` values made them shell-safe and broke `./mvnw spring-boot:run`, which reads the same file as `.properties` where a quote is just a character | a numeric port failing to parse |
 | 16 | `rpk security user update` rejects `-p`; only `create` takes it. Provisioning passed on a fresh volume and failed on every run after | second `docker compose up` |
+| 17 | nginx health-checked itself over `localhost`, which resolves to `::1` first, while nginx listened on IPv4 only — a working edge reported unhealthy | reading `docker ps` |
+| 18 | `main` declared `272px 1fr`, and a hidden sidebar leaves the grid rather than collapsing its track, so the landing page rendered squashed against the left edge | a screenshot |
+| 19 | The client acknowledged reads from a view that was not on screen — which lies to the sender and zeroes your own unread count | the unread badge never appearing |
+| 20 | `now - Long.MIN_VALUE` overflows, so the CORS cache looked permanently fresh and the origin set stayed empty for ever, refusing every cross-origin request with nothing logged | a preflight from an origin that was in the table |
+| 21 | nginx forwarded `$host`, which drops the port, so the app compared `localhost:8081` against `localhost`, decided its own frontend was cross-origin, and refused the websocket handshake | the Next.js client failing to connect at all |
 
 Two of these are worth separating out, because the tests that "covered" them passed:
 
@@ -133,6 +138,9 @@ Two of these are worth separating out, because the tests that "covered" them pas
   `presenceOfElementLocated` on the request button — presence, not visibility — so it passed
   against an element that no recipient could ever see. Nothing asserted that an image *loads*,
   only that a bubble appeared. Both assertions are now the stronger ones.
+- **20 and 21 are the same shape as 11.** Each was a silent refusal with no log line and no
+  failing test — a cache that never refreshed, and a port dropped by a proxy. Both were found by
+  asking the running system a question, not by reading the code that caused them.
 - **11 changed nothing observable.** Ordering still held, dedup still held, the harness still
   passed — on one partition, with eleven of twelve consumers idle. A correctness harness cannot
   catch a scalability property that has silently stopped being exercised.
