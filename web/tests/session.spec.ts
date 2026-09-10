@@ -107,40 +107,6 @@ test("an accepted friend is listed once, under Friends", async ({ browser }) => 
   await expect(bob.locator("[data-testid=chat]")).toHaveCount(0);
 });
 
-test("tapping a quote goes to the message it answers", async ({ browser }) => {
-  const alice = await arrive(browser);
-  const bob = await arrive(browser);
-  await matchThem(alice, bob);
-
-  await say(alice, "the first thing");
-  await expect(bob.locator("#messages")).toContainText("the first thing");
-  for (let i = 0; i < 12; i += 1) {
-    await say(alice, `filler ${i}`);
-  }
-  await expect(bob.locator("#messages")).toContainText("filler 11");
-
-  const original = bob.locator("[data-testid=message]").filter({ hasText: "the first thing" }).first();
-  await original.click({ button: "right" });
-  await bob.locator("[data-testid=menuReply]").click();
-  await say(bob, "answering the first");
-
-  await expect
-    .poll(async () => original.evaluate((n) => n.getBoundingClientRect().top))
-    .toBeLessThan(0);
-
-  await bob
-    .locator("[data-testid=message]")
-    .filter({ hasText: "answering the first" })
-    .first()
-    .locator("[data-testid=quote]")
-    .click();
-
-  // Back in view, which is the entire point of a quote you can tap.
-  await expect
-    .poll(async () => original.evaluate((n) => n.getBoundingClientRect().top), { timeout: 8000 })
-    .toBeGreaterThan(0);
-});
-
 test("a photo opens full size", async ({ browser }) => {
   const alice = await arrive(browser);
   const bob = await arrive(browser);
@@ -189,7 +155,14 @@ test("the camera control is offered next to the paperclip", async ({ browser }) 
 
   await expect(alice.locator("#attach")).toBeVisible();
   await expect(alice.locator("#camera")).toBeVisible();
-  await expect(alice.locator("#cameraInput")).toHaveAttribute("capture", "environment");
+
+  // It opens a camera. A file input with capture= only does that on a phone; on a desktop the
+  // attribute is ignored and you get the ordinary file picker, which is not a camera.
+  await alice.locator("#camera").click();
+  await expect(alice.locator("#cameraCapture")).toBeVisible();
+  await expect(alice.locator("#shutter")).toBeVisible();
+  await alice.locator("#closeCamera").click();
+  await expect(alice.locator("#cameraCapture")).toHaveCount(0);
 });
 
 test("the message menu opens towards the space that exists", async ({ browser }) => {

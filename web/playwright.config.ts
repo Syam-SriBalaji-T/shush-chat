@@ -23,5 +23,16 @@ export default defineConfig({
     baseURL: process.env.SHUSH_URL ?? "http://localhost:8081",
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // A synthetic camera, so the capture path is exercised rather than mocked out.
+        launchOptions: {
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        },
+      },
+    },
+  ],
 });

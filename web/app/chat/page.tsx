@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Avatar } from "@/components/Avatar";
 import { Brand } from "@/components/Brand";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
+import { CameraCapture } from "@/components/CameraCapture";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ImageViewer } from "@/components/ImageViewer";
 import { ProfileDialog, type ProfileTarget } from "@/components/ProfileDialog";
@@ -22,6 +23,7 @@ export default function Chat() {
   const shush = useShush();
   const [profile, setProfile] = useState<ProfileTarget | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const setup = (bare: boolean) => (
     <SetupPanel
@@ -179,6 +181,7 @@ export default function Chat() {
               onHideForMe={shush.hideForMe}
               onOpenImage={setViewing}
               onFindSomeone={shush.goHome}
+              onOpenCamera={() => setCameraOpen(true)}
               setupPanel={setup(true)}
             />
           )}
@@ -191,6 +194,16 @@ export default function Chat() {
           onCancel={shush.clearAttachment}
           onAdd={() => document.getElementById("imageInput")?.click()}
           onSend={shush.sendAttachment}
+        />
+      )}
+
+      {cameraOpen && (
+        <CameraCapture
+          onClose={() => setCameraOpen(false)}
+          onCapture={(file) => {
+            setCameraOpen(false);
+            shush.chooseAttachment(file);
+          }}
         />
       )}
 

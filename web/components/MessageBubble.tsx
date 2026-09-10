@@ -71,11 +71,12 @@ export const MessageBubble = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [offset, setOffset] = useState(0);
-  /** Which way the popovers grow, decided from the space actually available. */
-  const [placement, setPlacement] = useState<"below" | "above">("below");
+  /** Viewport coordinates for the open popover, or null until they have been measured. */
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
 
   const row = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const dots = useRef<HTMLButtonElement>(null);
   const startX = useRef(0);
   const dragging = useRef(false);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,21 +86,39 @@ export const MessageBubble = ({
   const isImage = message.kind === "image" && Boolean(message.mediaKey) && !message.deleted;
 
   /**
-   * Opens towards whichever side has room.
+   * Positions the popover next to the dots that opened it, in viewport coordinates.
    *
-   * <p>A menu anchored below is off the bottom of the window for the last message in a
-   * conversation, which is the message people act on most -- and a menu you have to scroll to
-   * reach is a menu that is in the way. Measured after layout and before paint, so it never
-   * flips visibly.
+   * <p>Anchored inside the row, it was positioned against a full-width row rather than the
+   * button, so it drifted across the bubble and off the edge of the window. Fixed coordinates
+   * measured from the button are the only version of this that holds for a bubble anywhere on
+   * screen: it opens away from the bubble -- left of the dots for your own messages, right of
+   * them for theirs -- and is then clamped so it cannot leave the viewport in either axis.
+   *
+   * <p>Measured in a layout effect, before paint, so it never appears in the wrong place first.
    */
   useLayoutEffect(() => {
-    if (!menuOpen && !pickerOpen) return;
-    const anchor = row.current?.getBoundingClientRect();
-    if (!anchor) return;
-    const needed = menuOpen ? (menu.current?.offsetHeight ?? 180) : 56;
-    const below = window.innerHeight - anchor.bottom;
-    setPlacement(below < needed + 16 ? "above" : "below");
-  }, [menuOpen, pickerOpen]);
+    if (!menuOpen && !pickerOpen) {
+      setAt(null);
+      return;
+    }
+    const button = dots.current?.getBoundingClientRect();
+    const box = menu.current?.getBoundingClientRect();
+    if (!button) return;
+
+    const width = box?.width ?? (menuOpen ? 176 : 260);
+    const height = box?.height ?? (menuOpen ? 180 : 46);
+    const margin = 8;
+
+    // Away from the bubble: yours sit on the right, so the menu goes left, and the other way
+    // round for theirs.
+    let left = mine ? button.left - width - 6 : button.right + 6;
+    left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
+
+    let top = button.top + button.height / 2 - height / 2;
+    top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+
+    setAt({ left, top });
+  }, [menuOpen, pickerOpen, mine]);
 
   const cancelLongPress = () => {
     if (longPress.current) {
@@ -157,9 +176,13 @@ export const MessageBubble = ({
     });
   };
 
-  const anchored = { [mine ? "right" : "left"]: 34 } as React.CSSProperties;
-  const vertical: React.CSSProperties =
-    placement === "below" ? { top: "100%", marginTop: 4 } : { bottom: "100%", marginBottom: 4 };
+  // Hidden until measured, so a popover is never painted at the wrong coordinates first.
+  const floating: React.CSSProperties = {
+    position: "fixed",
+    left: at?.left ?? -9999,
+    top: at?.top ?? -9999,
+    visibility: at ? "visible" : "hidden",
+  };
 
   return (
     <div
@@ -293,6 +316,7 @@ export const MessageBubble = ({
       {/* The desktop way in. On a phone it is a long press, which opens the picker directly. */}
       {!message.deleted && (
         <button
+          ref={dots}
           type="button"
           data-testid="messageMenuButton"
           aria-label="Message actions"
@@ -319,7 +343,7 @@ export const MessageBubble = ({
       )}
 
       {pickerOpen && (
-        <div className="absolute z-50" style={{ ...anchored, ...vertical }}>
+        <div ref={menu} className="z-[70]" style={floating}>
           <EmojiPicker chosen={myReaction} onPick={(emoji) => act(() => onReact(emoji))()} />
         </div>
       )}
@@ -330,10 +354,9 @@ export const MessageBubble = ({
           data-testid="messageMenu"
           /* Anchored to the dots that opened it, not to the far edge of the bubble: the
              pointer is already there, and every pixel it has to travel is friction. */
-          className="absolute z-50 flex min-w-44 flex-col overflow-hidden rounded-xl border py-1 shadow-xl"
+          className="z-[70] flex min-w-44 flex-col overflow-hidden rounded-xl border py-1 shadow-xl"
           style={{
-            ...anchored,
-            ...vertical,
+            ...floating,
             borderColor: "var(--color-line)",
             backgroundColor: "var(--color-surface-2)",
           }}

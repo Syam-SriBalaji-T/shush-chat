@@ -43,13 +43,18 @@ export const AttachmentPreview = ({
         </span>
       </div>
 
-      <div className="grid min-h-0 flex-1 place-items-center p-4">
+      {/* flex with min-h-0 and overflow-hidden, not grid: a grid row is auto-sized to its
+          content, so max-h-full on the image resolved against a track the image itself had
+          already stretched -- and a tall photo pushed straight through the caption bar. Here
+          the row cannot grow past the space left over, whatever shape the picture is. */}
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 pb-2">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           id="attachmentImage"
           alt="about to send"
           src={attachment.previewUrl}
           className="max-h-full max-w-full rounded-xl object-contain"
+          style={{ maxHeight: "100%", maxWidth: "100%" }}
         />
       </div>
 

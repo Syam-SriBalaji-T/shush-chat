@@ -46,13 +46,25 @@ export const MessageList = ({
   const bottom = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const [flashing, setFlashing] = useState<number | null>(null);
+  /**
+   * Whether the reader is at the live end of the conversation.
+   *
+   * <p>Following the bottom is only right when they are already there. Gating it on the flash
+   * instead was worse than not gating it at all: the flash clears on a timer, the effect ran
+   * again with nothing highlighted, and the list yanked itself back down a second and a half
+   * after somebody had deliberately scrolled away.
+   */
+  const pinned = useRef(true);
+
+  const onScroll = () => {
+    const node = list.current;
+    if (!node) return;
+    pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 120;
+  };
 
   useEffect(() => {
-    // Only follow the conversation when a new message arrives, not while somebody is reading
-    // back through it -- jumping to a quote and being yanked to the bottom is worse than not
-    // jumping at all.
-    if (flashing == null) bottom.current?.scrollIntoView({ block: "end" });
-  }, [items, flashing]);
+    if (pinned.current) bottom.current?.scrollIntoView({ block: "end" });
+  }, [items]);
 
   /**
    * Tapping a quote goes to what it answers and flashes it, which is what WhatsApp, Telegram
@@ -61,6 +73,8 @@ export const MessageList = ({
   const jumpTo = useCallback((seq: number) => {
     const target = list.current?.querySelector(`[data-testid=message][data-seq="${seq}"]`);
     if (!target) return;
+    // Going somewhere on purpose means you are no longer following the live end.
+    pinned.current = false;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     setFlashing(seq);
     setTimeout(() => setFlashing(null), 1600);
@@ -70,6 +84,7 @@ export const MessageList = ({
     <div
       id="messages"
       ref={list}
+      onScroll={onScroll}
       className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-6"
     >
       {items.map((item, index) => {

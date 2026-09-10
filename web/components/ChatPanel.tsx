@@ -28,6 +28,7 @@ export const ChatPanel = ({
   onHideForMe,
   onOpenImage,
   onFindSomeone,
+  onOpenCamera,
   setupPanel,
 }: {
   peer: Peer;
@@ -51,11 +52,11 @@ export const ChatPanel = ({
   onHideForMe: (message: Message) => void;
   onOpenImage: (mediaKey: string) => void;
   onFindSomeone: () => void;
+  onOpenCamera: () => void;
   setupPanel: React.ReactNode;
 }) => {
   const [draft, setDraft] = useState("");
   const file = useRef<HTMLInputElement>(null);
-  const camera = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLInputElement>(null);
 
   const submit = () => {
@@ -223,7 +224,7 @@ export const ChatPanel = ({
           className="btn-ghost grid h-10 w-10 place-items-center rounded-full p-0"
           title="Take a photo"
           aria-label="Take a photo"
-          onClick={() => camera.current?.click()}
+          onClick={onOpenCamera}
         >
           <svg
             viewBox="0 0 24 24"
@@ -238,21 +239,6 @@ export const ChatPanel = ({
             <circle cx="12" cy="12.8" r="3.4" />
           </svg>
         </button>
-        {/* capture="environment" hands straight to the phone camera; on a desktop the browser
-            falls back to the ordinary file picker, so one control covers both. */}
-        <input
-          id="cameraInput"
-          ref={camera}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          hidden
-          onChange={(event) => {
-            const chosen = event.target.files?.[0];
-            if (chosen) onChooseImage(chosen);
-            event.target.value = "";
-          }}
-        />
         <input
           id="composer"
           ref={composer}
