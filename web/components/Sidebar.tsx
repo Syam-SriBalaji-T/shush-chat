@@ -2,25 +2,29 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import type { Friend, FriendRequest, Session } from "@/lib/types";
+import type { Conversation, Friend, FriendRequest, Session } from "@/lib/types";
 import { Avatar } from "./Avatar";
 
 export const Sidebar = ({
   session,
   friends,
   requests,
+  conversations,
   openConversationId,
   chatOnScreen,
   onOpenFriend,
+  onOpenConversation,
   onFindSomeone,
   onRefresh,
 }: {
   session: Session;
   friends: Friend[];
   requests: FriendRequest[];
+  conversations: Conversation[];
   openConversationId: string | null;
   chatOnScreen: boolean;
   onOpenFriend: (friend: Friend) => void;
+  onOpenConversation: (conversation: Conversation) => void;
   onFindSomeone: () => void;
   onRefresh: () => Promise<void>;
 }) => {
@@ -143,6 +147,61 @@ export const Sidebar = ({
         {friends.length === 0 && (
           <p id="noFriends" className="mt-0.5 text-[13px]" style={{ color: "var(--color-faint)" }}>
             Nobody yet. Keep someone you enjoyed talking to.
+          </p>
+        )}
+      </div>
+
+      <div>
+        <h2 className="section-label">Chats</h2>
+        <ul id="chats" className="m-0 flex list-none flex-col gap-1 p-0">
+          {conversations.map((conversation) => {
+            const onScreenNow = chatOnScreen && conversation.id === openConversationId;
+            return (
+              <li key={conversation.id}>
+                <button
+                  type="button"
+                  data-testid="chat"
+                  data-conversation-id={conversation.id}
+                  aria-current={conversation.id === openConversationId}
+                  onClick={() => onOpenConversation(conversation)}
+                  className="flex w-full items-center gap-2.5 rounded-xl border border-transparent p-2 text-left transition hover:border-[var(--color-line-soft)] hover:bg-[var(--color-surface-2)] aria-[current=true]:border-[var(--color-brand)] aria-[current=true]:bg-[var(--color-surface-2)]"
+                >
+                  <Avatar id={conversation.peerId} name={conversation.peerName} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">
+                      {conversation.peerName ?? "Someone"}
+                    </span>
+                    <span
+                      className="block truncate text-xs"
+                      style={{ color: "var(--color-faint)" }}
+                    >
+                      {conversation.lastMessage
+                        ? `${conversation.lastFromMe ? "You: " : ""}${conversation.lastMessage}`
+                        : conversation.kind === "friend"
+                          ? "Friend"
+                          : "Nothing said yet"}
+                    </span>
+                  </span>
+                  {conversation.unreadCount > 0 && !onScreenNow && (
+                    <span
+                      data-testid="chatUnread"
+                      className="grid h-5 min-w-5 flex-none place-items-center rounded-full px-1.5 text-[11px] font-bold text-white"
+                      style={{
+                        background:
+                          "linear-gradient(135deg, var(--color-brand), var(--color-brand-2))",
+                      }}
+                    >
+                      {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {conversations.length === 0 && (
+          <p id="noChats" className="mt-0.5 text-[13px]" style={{ color: "var(--color-faint)" }}>
+            Nothing yet. Every conversation you have shows up here, friend or stranger.
           </p>
         )}
       </div>

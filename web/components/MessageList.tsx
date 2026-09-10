@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { mediaUrl } from "@/lib/api";
-import { clockTime } from "@/lib/time";
-import type { ChatItem } from "@/lib/types";
-import { Ticks } from "./Ticks";
+import type { ChatItem, Message } from "@/lib/types";
+import { MessageBubble } from "./MessageBubble";
 
 /**
  * Date separators and system events share one pill on purpose: both are the room talking
@@ -26,7 +24,23 @@ const Pill = ({ children, muted }: { children: React.ReactNode; muted?: boolean 
   </div>
 );
 
-export const MessageList = ({ items, meId }: { items: ChatItem[]; meId: string | undefined }) => {
+export const MessageList = ({
+  items,
+  meId,
+  quotedFor,
+  onReply,
+  onReact,
+  onDeleteForEveryone,
+  onHideForMe,
+}: {
+  items: ChatItem[];
+  meId: string | undefined;
+  quotedFor: (seq: number | null | undefined) => Message | null;
+  onReply: (message: Message) => void;
+  onReact: (message: Message, emoji: string | null) => void;
+  onDeleteForEveryone: (message: Message) => void;
+  onHideForMe: (message: Message) => void;
+}) => {
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,10 +48,7 @@ export const MessageList = ({ items, meId }: { items: ChatItem[]; meId: string |
   }, [items]);
 
   return (
-    <div
-      id="messages"
-      className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-6"
-    >
+    <div id="messages" className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-6">
       {items.map((item, index) => {
         if (item.kind === "day") {
           return (
@@ -51,43 +62,19 @@ export const MessageList = ({ items, meId }: { items: ChatItem[]; meId: string |
         }
 
         const { message, delivery } = item;
-        const mine = message.senderId === meId;
         return (
-          <div
+          <MessageBubble
             key={message.clientMsgId ?? `${message.seq}-${index}`}
-            data-testid="message"
-            data-seq={message.seq ?? ""}
-            data-mine={mine}
-            className="rise max-w-[74%] px-3.5 py-2.5"
-            style={{
-              alignSelf: mine ? "flex-end" : "flex-start",
-              color: mine ? "#fff" : "var(--color-body)",
-              background: mine
-                ? "linear-gradient(135deg, #6d4dfb, var(--color-brand-2))"
-                : "var(--color-surface-2)",
-              border: `1px solid ${mine ? "transparent" : "var(--color-line-soft)"}`,
-              borderRadius: mine ? "16px 16px 5px 16px" : "16px 16px 16px 5px",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {message.kind === "image" && message.mediaKey ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                alt="shared image"
-                src={mediaUrl(message.mediaKey)}
-                className="my-0.5 block max-w-[260px] rounded-[10px]"
-              />
-            ) : (
-              <div>{message.body}</div>
-            )}
-            <div
-              className="mt-0.5 flex items-center gap-1 text-[10.5px] whitespace-nowrap opacity-65"
-              style={{ justifyContent: mine ? "flex-end" : "flex-start" }}
-            >
-              <span>{clockTime(message.createdAt)}</span>
-              {mine && <Ticks state={delivery} />}
-            </div>
-          </div>
+            message={message}
+            delivery={delivery}
+            mine={message.senderId === meId}
+            meId={meId}
+            quoted={quotedFor(message.replyToSeq)}
+            onReply={() => onReply(message)}
+            onReact={(emoji) => onReact(message, emoji)}
+            onDeleteForEveryone={() => onDeleteForEveryone(message)}
+            onHideForMe={() => onHideForMe(message)}
+          />
         );
       })}
       <div ref={bottom} />

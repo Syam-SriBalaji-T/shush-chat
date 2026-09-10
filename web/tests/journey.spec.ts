@@ -99,6 +99,9 @@ test("an image reaches the other person and actually loads", async ({ browser })
     mimeType: "image/png",
     buffer: PNG,
   });
+  // Choosing a file is no longer the same act as sending it: it opens a preview first.
+  await expect(alice.locator("#attachmentPreview")).toBeVisible();
+  await alice.locator("#sendAttachment").click();
 
   const delivered = bob.locator("#messages img").first();
   await expect(delivered).toBeVisible();

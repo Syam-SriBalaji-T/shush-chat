@@ -1,5 +1,5 @@
 import { apiUrl } from "./config";
-import type { Friend, FriendRequest, Message, Session, Interest } from "./types";
+import type { Conversation, Friend, FriendRequest, Message, Session, Interest } from "./types";
 
 let bearer: string | null = null;
 
@@ -61,6 +61,23 @@ export const api = {
   declineRequest: (id: string) => request(`/api/friend-requests/${id}/decline`, { method: "POST" }),
 
   unfriend: (userId: string) => request(`/api/friends/${userId}`, { method: "DELETE" }),
+
+  /** Every conversation this person has had, newest first, strangers included. */
+  conversations: () => json<Conversation[]>("/api/conversations"),
+
+  react: (messageId: string, emoji: string | null) =>
+    emoji === null
+      ? request(`/api/messages/${messageId}/reaction`, { method: "DELETE" })
+      : request(`/api/messages/${messageId}/reaction`, {
+          method: "PUT",
+          body: JSON.stringify({ emoji }),
+        }),
+
+  /** Yours only, and it removes the words for both people. */
+  deleteMessage: (messageId: string) => request(`/api/messages/${messageId}`, { method: "DELETE" }),
+
+  /** Anyone's, and nobody is told. */
+  hideMessage: (messageId: string) => request(`/api/messages/${messageId}/hide`, { method: "POST" }),
 
   conversation: (id: string) =>
     json<{ others: { userId: string; readCursorSeq: number; hasLeft: boolean }[] }>(

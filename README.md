@@ -575,6 +575,29 @@ stack.
 Decisions taken by the implementer because the specification did not cover them. Each is the
 smallest reasonable choice, not a considered preference.
 
+**History of everything, strangers included.** `pre-plan.md` says a stranger conversation
+nobody asked to keep does not survive its ending, and the retention job deleted it an hour
+later. The owner asked for a history list covering every conversation, so the purge now only
+reaps conversations with no messages in them — a matched pair who never spoke. The cost that
+rule was protecting is image storage, and that is unchanged: media still expires on its own
+schedule. Removing a friend is the same shape — they leave the friends list and stay in the
+chat list, because ending a friendship is not the same as never having spoken.
+
+**Deleting a message means two things.** Deleting your own removes the words for both people
+and leaves a marker; the row and its `seq` survive, because `seq` is dense by design and a gap
+reads as a lost message to the ordering harness. Deleting somebody else's hides it from you
+alone and tells nobody — a separate table, because "they deleted it" and "I hid it" are
+different claims and collapsing them would make them indistinguishable.
+
+**Reactions are an allowlist of eight.** One per person per message, replaced rather than
+accumulated. The emoji is stored as text and rendered by every client, so accepting arbitrary
+strings would make a reaction a way to put anything into someone else's message list.
+
+**Reactions and deletions do not go through Redpanda.** The log is the write-ahead log for
+*messages*, which need an order, a sequence number and exactly one writer. A reaction has no
+position in the conversation and a deletion edits a row that already has one. They are ordinary
+writes; the fanout still goes through Redis, so the single delivery path is untouched.
+
 **Removing a friend.** `pre-plan.md` says how you keep somebody and never how you stop. Left
 alone that is a dead end rather than an omission: matching skips anyone you are already friends
 with, so once two accounts had kept each other neither could ever be matched again — correct

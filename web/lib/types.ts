@@ -22,6 +22,8 @@ export type FriendRequest = {
   expiresAt: string;
 };
 
+export type Reaction = { userId: string; emoji: string };
+
 export type Message = {
   id?: string;
   conversationId: string;
@@ -32,6 +34,24 @@ export type Message = {
   mediaKey: string | null;
   clientMsgId: string | null;
   createdAt: string | number;
+  /** The seq this replies to, in the same conversation. */
+  replyToSeq?: number | null;
+  /** Deleted for everyone. The row and its seq survive; the words do not. */
+  deleted?: boolean;
+  reactions?: Reaction[];
+};
+
+/** One row of the history list: every conversation, friends and strangers alike. */
+export type Conversation = {
+  id: string;
+  kind: "stranger" | "friend";
+  state: string;
+  unreadCount: number;
+  peerId: string;
+  peerName: string | null;
+  lastMessage: string | null;
+  lastFromMe: boolean;
+  lastAt: string | null;
 };
 
 /** How far a message has got, in the order it gets there. */

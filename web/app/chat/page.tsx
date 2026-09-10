@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Avatar } from "@/components/Avatar";
 import { Brand } from "@/components/Brand";
+import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ProfileDialog, type ProfileTarget } from "@/components/ProfileDialog";
 import { SetupPanel } from "@/components/SetupPanel";
@@ -98,13 +99,15 @@ export default function Chat() {
             session={shush.session}
             friends={shush.friends}
             requests={shush.requests}
+            conversations={shush.conversations}
             openConversationId={shush.conversationId}
             chatOnScreen={shush.view === "chat"}
             onOpenFriend={shush.openFriend}
+            onOpenConversation={shush.openConversationFromHistory}
             onFindSomeone={shush.goHome}
             onRefresh={async () => {
               await shush.reloadRequests();
-              await shush.reloadFriends();
+              await shush.refreshLists();
             }}
           />
         )}
@@ -153,15 +156,31 @@ export default function Chat() {
                   friend: Boolean(shush.currentFriend),
                 })
               }
+              replyingTo={shush.replyingTo}
+              quotedFor={shush.quotedFor}
               onSend={shush.sendMessage}
-              onImage={shush.sendImage}
+              onChooseImage={shush.chooseAttachment}
               onTyping={shush.notifyTyping}
               onAskToKeep={shush.askToKeep}
               onLeave={shush.leave}
+              onReply={shush.setReplyingTo}
+              onCancelReply={() => shush.setReplyingTo(null)}
+              onReact={shush.react}
+              onDeleteForEveryone={shush.deleteForEveryone}
+              onHideForMe={shush.hideForMe}
             />
           )}
         </section>
       </main>
+
+      {shush.attachment && (
+        <AttachmentPreview
+          attachment={shush.attachment}
+          onCancel={shush.clearAttachment}
+          onAdd={() => document.getElementById("imageInput")?.click()}
+          onSend={shush.sendAttachment}
+        />
+      )}
 
       <ProfileDialog
         target={profile}
