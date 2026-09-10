@@ -575,6 +575,23 @@ stack.
 Decisions taken by the implementer because the specification did not cover them. Each is the
 smallest reasonable choice, not a considered preference.
 
+**Leaving is final, and the server says so.** Once either person leaves, the conversation is
+closed: sends are refused with `conversation_ended`, the composer goes away, and asking to keep
+them is the one thing still on offer. Both screens render from one `left` frame the server
+sends to both sides — a client that prints "you left" on its own say-so is claiming something
+the server may not have done, which is exactly how one side sat in a dead conversation typing
+into it while the other had already gone.
+
+**Changing your name is gone.** It was one click from a fresh identity for anyone who had just
+been unpleasant under the old one, which is the wrong thing to make easy on a service built on
+anonymity. A name is given once, at the door.
+
+**Interests of your own stay in this browser.** The matcher works on a controlled vocabulary —
+both sides picking from the same fixed list is what makes "you both like Music" a fact rather
+than a guess — so a tag only one person has cannot pair them with anybody. They are there to
+say what you are into when the list has not got it, they live in `localStorage`, and nothing
+sends them anywhere.
+
 **History of everything, strangers included.** `pre-plan.md` says a stranger conversation
 nobody asked to keep does not survive its ending, and the retention job deleted it an hour
 later. The owner asked for a history list covering every conversation, so the purge now only

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { mediaUrl } from "@/lib/api";
 import { clockTime } from "@/lib/time";
 import type { Delivery, Message } from "@/lib/types";
@@ -11,10 +11,23 @@ import { Ticks } from "./Ticks";
 const SWIPE_TO_REPLY = 60;
 const LONG_PRESS_MS = 450;
 
-const Quoted = ({ message, mine }: { message: Message; mine: boolean }) => (
-  <div
+const Quoted = ({
+  message,
+  mine,
+  onJump,
+}: {
+  message: Message;
+  mine: boolean;
+  onJump: () => void;
+}) => (
+  <button
+    type="button"
     data-testid="quote"
-    className="mb-1.5 truncate rounded-lg border-l-[3px] px-2.5 py-1.5 text-[13px]"
+    onClick={(event) => {
+      event.stopPropagation();
+      onJump();
+    }}
+    className="mb-1.5 block w-full cursor-pointer truncate rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[13px] transition hover:brightness-110"
     style={{
       borderLeftColor: mine ? "rgb(255 255 255 / 0.7)" : "var(--color-brand)",
       backgroundColor: mine ? "rgb(255 255 255 / 0.14)" : "var(--color-surface-3)",
@@ -27,7 +40,7 @@ const Quoted = ({ message, mine }: { message: Message; mine: boolean }) => (
           ? "Photo"
           : message.body}
     </span>
-  </div>
+  </button>
 );
 
 export const MessageBubble = ({
@@ -40,6 +53,8 @@ export const MessageBubble = ({
   onReact,
   onDeleteForEveryone,
   onHideForMe,
+  onJumpToQuoted,
+  onOpenImage,
 }: {
   message: Message;
   delivery: Delivery;
@@ -50,17 +65,41 @@ export const MessageBubble = ({
   onReact: (emoji: string | null) => void;
   onDeleteForEveryone: () => void;
   onHideForMe: () => void;
+  onJumpToQuoted: (seq: number) => void;
+  onOpenImage: (key: string) => void;
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [offset, setOffset] = useState(0);
+  /** Which way the popovers grow, decided from the space actually available. */
+  const [placement, setPlacement] = useState<"below" | "above">("below");
 
+  const row = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   const startX = useRef(0);
   const dragging = useRef(false);
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moved = useRef(false);
 
   const myReaction = (message.reactions ?? []).find((r) => r.userId === meId)?.emoji ?? null;
+  const isImage = message.kind === "image" && Boolean(message.mediaKey) && !message.deleted;
+
+  /**
+   * Opens towards whichever side has room.
+   *
+   * <p>A menu anchored below is off the bottom of the window for the last message in a
+   * conversation, which is the message people act on most -- and a menu you have to scroll to
+   * reach is a menu that is in the way. Measured after layout and before paint, so it never
+   * flips visibly.
+   */
+  useLayoutEffect(() => {
+    if (!menuOpen && !pickerOpen) return;
+    const anchor = row.current?.getBoundingClientRect();
+    if (!anchor) return;
+    const needed = menuOpen ? (menu.current?.offsetHeight ?? 180) : 56;
+    const below = window.innerHeight - anchor.bottom;
+    setPlacement(below < needed + 16 ? "above" : "below");
+  }, [menuOpen, pickerOpen]);
 
   const cancelLongPress = () => {
     if (longPress.current) {
@@ -91,7 +130,6 @@ export const MessageBubble = ({
       moved.current = true;
       cancelLongPress();
     }
-    // Clamped, and only in the one direction that means "reply" for this side.
     const allowed = mine ? Math.min(0, dx) : Math.max(0, dx);
     setOffset(Math.max(-90, Math.min(90, allowed)));
   };
@@ -119,8 +157,13 @@ export const MessageBubble = ({
     });
   };
 
+  const anchored = { [mine ? "right" : "left"]: 34 } as React.CSSProperties;
+  const vertical: React.CSSProperties =
+    placement === "below" ? { top: "100%", marginTop: 4 } : { bottom: "100%", marginBottom: 4 };
+
   return (
     <div
+      ref={row}
       data-testid="messageRow"
       className="group relative flex w-full"
       style={{ justifyContent: mine ? "flex-end" : "flex-start" }}
@@ -130,7 +173,7 @@ export const MessageBubble = ({
         data-seq={message.seq ?? ""}
         data-mine={mine}
         data-deleted={Boolean(message.deleted)}
-        className="rise relative max-w-[74%] px-3.5 py-2.5"
+        className="rise relative max-w-[74%]"
         style={{
           transform: `translateX(${offset}px)`,
           transition: dragging.current ? "none" : "transform .18s ease",
@@ -144,6 +187,12 @@ export const MessageBubble = ({
           border: `1px solid ${mine && !message.deleted ? "transparent" : "var(--color-line-soft)"}`,
           borderRadius: mine ? "16px 16px 5px 16px" : "16px 16px 16px 5px",
           overflowWrap: "anywhere",
+          // An image fills its bubble edge to edge; text needs breathing room. Padding the
+          // bubble for both is what left a photo floating inside a coloured frame.
+          padding: isImage ? 4 : "10px 14px",
+          // The reaction chip hangs off the bottom edge, so the bubble reserves room for it
+          // rather than being clipped by the next message -- what every chat app does.
+          marginBottom: (message.reactions ?? []).length > 0 ? 14 : 0,
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -158,7 +207,15 @@ export const MessageBubble = ({
           if (!message.deleted) setMenuOpen(true);
         }}
       >
-        {quoted && <Quoted message={quoted} mine={mine} />}
+        <div style={{ padding: isImage && quoted ? "6px 8px 0" : undefined }}>
+          {quoted && (
+            <Quoted
+              message={quoted}
+              mine={mine}
+              onJump={() => message.replyToSeq != null && onJumpToQuoted(message.replyToSeq)}
+            />
+          )}
+        </div>
 
         {message.deleted ? (
           <div className="flex items-center gap-1.5 text-[14px] italic opacity-60">
@@ -168,32 +225,52 @@ export const MessageBubble = ({
             </svg>
             This message was deleted
           </div>
-        ) : message.kind === "image" && message.mediaKey ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            alt="shared image"
-            src={mediaUrl(message.mediaKey)}
-            draggable={false}
-            className="my-0.5 block max-w-[260px] rounded-[10px]"
-          />
+        ) : isImage ? (
+          /* The photo is the bubble. Time sits on the image itself, over a gradient, which is
+             what keeps a picture from being framed like a document. */
+          <button
+            type="button"
+            data-testid="openImage"
+            onClick={() => onOpenImage(message.mediaKey!)}
+            className="relative block cursor-zoom-in overflow-hidden"
+            style={{ borderRadius: 13 }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              alt="shared image"
+              src={mediaUrl(message.mediaKey!)}
+              draggable={false}
+              className="block max-h-[340px] min-w-[120px] object-cover"
+              style={{ maxWidth: 300 }}
+            />
+            <span
+              className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 px-2.5 pt-6 pb-1.5 text-[10.5px] text-white"
+              style={{ background: "linear-gradient(transparent, rgb(0 0 0 / 0.55))" }}
+            >
+              {clockTime(message.createdAt)}
+              {mine && <Ticks state={delivery} />}
+            </span>
+          </button>
         ) : (
           <div>{message.body}</div>
         )}
 
-        <div
-          className="mt-0.5 flex items-center gap-1 text-[10.5px] whitespace-nowrap opacity-65"
-          style={{ justifyContent: mine ? "flex-end" : "flex-start" }}
-        >
-          <span>{clockTime(message.createdAt)}</span>
-          {mine && !message.deleted && <Ticks state={delivery} />}
-        </div>
+        {!isImage && (
+          <div
+            className="mt-0.5 flex items-center gap-1 text-[10.5px] whitespace-nowrap opacity-65"
+            style={{ justifyContent: mine ? "flex-end" : "flex-start" }}
+          >
+            <span>{clockTime(message.createdAt)}</span>
+            {mine && !message.deleted && <Ticks state={delivery} />}
+          </div>
+        )}
 
         {(message.reactions ?? []).length > 0 && (
           <button
             type="button"
             data-testid="reactions"
             onClick={() => setPickerOpen(true)}
-            className="absolute -bottom-3 flex cursor-pointer items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[12px] shadow"
+            className="absolute -bottom-3 z-10 flex cursor-pointer items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[12px] shadow-md"
             style={{
               [mine ? "right" : "left"]: 8,
               borderColor: "var(--color-line)",
@@ -242,17 +319,21 @@ export const MessageBubble = ({
       )}
 
       {pickerOpen && (
-        <div className="absolute -top-11 z-50" style={{ [mine ? "right" : "left"]: 12 }}>
+        <div className="absolute z-50" style={{ ...anchored, ...vertical }}>
           <EmojiPicker chosen={myReaction} onPick={(emoji) => act(() => onReact(emoji))()} />
         </div>
       )}
 
       {menuOpen && (
         <div
+          ref={menu}
           data-testid="messageMenu"
-          className="absolute top-8 z-50 flex min-w-44 flex-col overflow-hidden rounded-xl border py-1 shadow-xl"
+          /* Anchored to the dots that opened it, not to the far edge of the bubble: the
+             pointer is already there, and every pixel it has to travel is friction. */
+          className="absolute z-50 flex min-w-44 flex-col overflow-hidden rounded-xl border py-1 shadow-xl"
           style={{
-            [mine ? "right" : "left"]: 12,
+            ...anchored,
+            ...vertical,
             borderColor: "var(--color-line)",
             backgroundColor: "var(--color-surface-2)",
           }}

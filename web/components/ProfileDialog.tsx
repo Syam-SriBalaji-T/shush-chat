@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Avatar } from "./Avatar";
 
 export type ProfileTarget = {
@@ -14,20 +14,12 @@ export type ProfileTarget = {
 export const ProfileDialog = ({
   target,
   onClose,
-  onShuffle,
   onRemoveFriend,
 }: {
   target: ProfileTarget | null;
   onClose: () => void;
-  onShuffle: () => Promise<string>;
   onRemoveFriend: (userId: string) => Promise<void>;
 }) => {
-  const [note, setNote] = useState("");
-
-  useEffect(() => {
-    setNote("");
-  }, [target]);
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -64,21 +56,6 @@ export const ProfileDialog = ({
           {target.sub}
         </p>
         <div className="flex flex-col gap-2">
-          {target.mine && (
-            <button
-              id="shuffleName"
-              type="button"
-              className="btn-ghost"
-              onClick={async () => setNote(await onShuffle())}
-            >
-              Shuffle my name
-            </button>
-          )}
-          {note && (
-            <span className="text-[13px]" style={{ color: "var(--color-faint)" }}>
-              {note}
-            </span>
-          )}
           {target.friend && target.userId && (
             <button
               id="removeFriend"

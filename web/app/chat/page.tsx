@@ -6,6 +6,7 @@ import { Avatar } from "@/components/Avatar";
 import { Brand } from "@/components/Brand";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { ChatPanel } from "@/components/ChatPanel";
+import { ImageViewer } from "@/components/ImageViewer";
 import { ProfileDialog, type ProfileTarget } from "@/components/ProfileDialog";
 import { SetupPanel } from "@/components/SetupPanel";
 import { Sidebar } from "@/components/Sidebar";
@@ -20,6 +21,23 @@ import { useShush } from "@/lib/useShush";
 export default function Chat() {
   const shush = useShush();
   const [profile, setProfile] = useState<ProfileTarget | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+
+  const setup = (bare: boolean) => (
+    <SetupPanel
+      interests={shush.interests}
+      selected={shush.selected}
+      setSelected={shush.setSelected}
+      myInterests={shush.myInterests}
+      onAddMyInterest={shush.addMyInterest}
+      onRemoveMyInterest={shush.removeMyInterest}
+      patience={shush.patience}
+      setPatience={shush.setPatience}
+      findStatus={shush.findStatus}
+      onFind={shush.findSomeone}
+      bare={bare}
+    />
+  );
 
   const signedIn = Boolean(shush.session);
 
@@ -67,7 +85,7 @@ export default function Chat() {
             }}
           >
             <Avatar id={shush.session.user.id} name={shush.session.user.displayName} size={18} />
-            {shush.session.user.displayName}
+            <span data-testid="myName">{shush.session.user.displayName}</span>
           </button>
         )}
 
@@ -124,17 +142,7 @@ export default function Chat() {
             </div>
           )}
 
-          {signedIn && shush.view === "setup" && (
-            <SetupPanel
-              interests={shush.interests}
-              selected={shush.selected}
-              setSelected={shush.setSelected}
-              patience={shush.patience}
-              setPatience={shush.setPatience}
-              findStatus={shush.findStatus}
-              onFind={shush.findSomeone}
-            />
-          )}
+          {signedIn && shush.view === "setup" && setup(false)}
 
           {signedIn && shush.view === "chat" && (
             <ChatPanel
@@ -143,10 +151,11 @@ export default function Chat() {
               meId={shush.session?.user.id}
               typing={shush.typing}
               isFriendConversation={shush.isFriendConversation}
+              ended={shush.ended}
               onOpenPeer={() =>
                 setProfile({
                   userId: shush.peer.userId,
-                  name: shush.currentFriend?.displayName ?? shush.peer.name ?? "A stranger",
+                  name: shush.currentFriend?.displayName ?? shush.peer.name ?? "Someone",
                   sub: shush.currentFriend
                     ? shush.currentFriend.online
                       ? "Online"
@@ -168,6 +177,9 @@ export default function Chat() {
               onReact={shush.react}
               onDeleteForEveryone={shush.deleteForEveryone}
               onHideForMe={shush.hideForMe}
+              onOpenImage={setViewing}
+              onFindSomeone={shush.goHome}
+              setupPanel={setup(true)}
             />
           )}
         </section>
@@ -182,10 +194,11 @@ export default function Chat() {
         />
       )}
 
+      {viewing && <ImageViewer mediaKey={viewing} onClose={() => setViewing(null)} />}
+
       <ProfileDialog
         target={profile}
         onClose={() => setProfile(null)}
-        onShuffle={shush.shuffleName}
         onRemoveFriend={shush.removeFriend}
       />
     </div>

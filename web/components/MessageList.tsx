@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatItem, Message } from "@/lib/types";
 import { MessageBubble } from "./MessageBubble";
 
@@ -32,6 +32,7 @@ export const MessageList = ({
   onReact,
   onDeleteForEveryone,
   onHideForMe,
+  onOpenImage,
 }: {
   items: ChatItem[];
   meId: string | undefined;
@@ -40,15 +41,37 @@ export const MessageList = ({
   onReact: (message: Message, emoji: string | null) => void;
   onDeleteForEveryone: (message: Message) => void;
   onHideForMe: (message: Message) => void;
+  onOpenImage: (mediaKey: string) => void;
 }) => {
   const bottom = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const [flashing, setFlashing] = useState<number | null>(null);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
-  }, [items]);
+    // Only follow the conversation when a new message arrives, not while somebody is reading
+    // back through it -- jumping to a quote and being yanked to the bottom is worse than not
+    // jumping at all.
+    if (flashing == null) bottom.current?.scrollIntoView({ block: "end" });
+  }, [items, flashing]);
+
+  /**
+   * Tapping a quote goes to what it answers and flashes it, which is what WhatsApp, Telegram
+   * and Slack all do -- a quote that cannot be followed is a screenshot of a reply.
+   */
+  const jumpTo = useCallback((seq: number) => {
+    const target = list.current?.querySelector(`[data-testid=message][data-seq="${seq}"]`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashing(seq);
+    setTimeout(() => setFlashing(null), 1600);
+  }, []);
 
   return (
-    <div id="messages" className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-6">
+    <div
+      id="messages"
+      ref={list}
+      className="flex min-h-0 flex-1 flex-col gap-[3px] overflow-y-auto p-6"
+    >
       {items.map((item, index) => {
         if (item.kind === "day") {
           return (
@@ -63,8 +86,12 @@ export const MessageList = ({
 
         const { message, delivery } = item;
         return (
-          <MessageBubble
+          <div
             key={message.clientMsgId ?? `${message.seq}-${index}`}
+            data-flash={flashing != null && message.seq === flashing}
+            className="rounded-2xl transition-colors duration-500 data-[flash=true]:bg-[color-mix(in_srgb,var(--color-brand)_22%,transparent)]"
+          >
+          <MessageBubble
             message={message}
             delivery={delivery}
             mine={message.senderId === meId}
@@ -74,7 +101,10 @@ export const MessageList = ({
             onReact={(emoji) => onReact(message, emoji)}
             onDeleteForEveryone={() => onDeleteForEveryone(message)}
             onHideForMe={() => onHideForMe(message)}
+            onJumpToQuoted={jumpTo}
+            onOpenImage={onOpenImage}
           />
+          </div>
         );
       })}
       <div ref={bottom} />

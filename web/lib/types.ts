@@ -17,6 +17,7 @@ export type FriendRequest = {
   id: string;
   conversationId: string;
   fromUserId: string;
+  fromDisplayName: string | null;
   toUserId: string;
   status: string;
   expiresAt: string;

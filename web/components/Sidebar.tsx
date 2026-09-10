@@ -68,7 +68,11 @@ export const Sidebar = ({
               className="flex flex-col gap-2 rounded-xl border p-3"
               style={{ borderColor: "var(--color-line)", backgroundColor: "var(--color-surface-2)" }}
             >
-              <p className="m-0 text-[13px]">Someone would like to keep you.</p>
+              {/* Their name. "Someone would like to keep you" is a question nobody can
+                  answer -- the app knows who it means and should say so. */}
+              <p className="m-0 text-[13px]">
+                <strong>{request.fromDisplayName ?? "Someone"}</strong> would like to keep you.
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"

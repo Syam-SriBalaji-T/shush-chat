@@ -1,0 +1,218 @@
+import { expect, test, type Browser, type Page } from "@playwright/test";
+
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAOUlEQVR42u3OMQEAAAgDoK1/aM3g4QcFaEmYs1UEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcGgBXQABBQIcHwAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+const arrive = async (browser: Browser): Promise<Page> => {
+  const page = await (await browser.newContext()).newPage();
+  await page.goto("/");
+  await page.getByRole("link", { name: "Start chatting" }).click();
+  await expect(page.locator("#displayName")).toBeVisible();
+  return page;
+};
+
+const matchThem = async (a: Page, b: Page) => {
+  for (const page of [a, b]) {
+    await expect(page.locator("[data-testid=interest]").first()).toBeVisible();
+  }
+  const id = await a.locator("[data-testid=interest]").first().getAttribute("data-interest-id");
+  for (const page of [a, b]) {
+    const tile = page.locator(`[data-interest-id="${id}"]`);
+    if ((await tile.getAttribute("aria-pressed")) !== "true") await tile.click();
+  }
+  await a.waitForTimeout(600);
+  await a.locator("#findSomeone").click();
+  await b.locator("#findSomeone").click();
+  await expect(a.locator("#chat")).toBeVisible();
+  await expect(b.locator("#chat")).toBeVisible();
+};
+
+const say = async (page: Page, text: string) => {
+  await page.locator("#composer").fill(text);
+  await page.locator("#send").click();
+};
+
+test("leaving reaches both people and closes the conversation", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+  await say(alice, "before I go");
+  await expect(bob.locator("#messages")).toContainText("before I go");
+
+  await alice.locator("#leave").click();
+
+  // The whole bug: one side was sure, the other was never told.
+  await expect(alice.locator("#messages")).toContainText("You left");
+  await expect(bob.locator("#messages")).toContainText("They have left");
+
+  // And it is over for both -- no composer to type into.
+  for (const page of [alice, bob]) {
+    await expect(page.locator("#endedPanel")).toBeVisible();
+    await expect(page.locator("#composer")).toHaveCount(0);
+    // Asking to keep them is the one thing still on offer.
+    await expect(page.locator("#addFriend")).toBeVisible();
+    await expect(page.locator("#leave")).toHaveCount(0);
+  }
+});
+
+test("an ended conversation offers the way to the next one", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+  await alice.locator("#leave").click();
+  await expect(bob.locator("#endedPanel")).toBeVisible();
+
+  // The card is right there rather than a link to it: one click to the next person.
+  await expect(bob.locator("#endedPanel [data-testid=interest]").first()).toBeVisible();
+  await expect(bob.locator("#endedPanel #findSomeone")).toBeVisible();
+  await bob.locator("#findSomeoneNext").click();
+  await expect(bob.locator("#findSomeone")).toBeVisible();
+});
+
+test("the conversation is headed with their name, not 'A stranger'", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  // The name alone: the header button also carries an avatar initial.
+  const aliceName = (await alice.locator("[data-testid=myName]").innerText()).trim();
+  await matchThem(alice, bob);
+
+  await expect(bob.locator("#chatHeading")).toHaveText(aliceName);
+  await expect(bob.locator("#chatSub")).toContainText(/you both like|random match/i);
+});
+
+test("a friend request says who it is from", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  const aliceName = (await alice.locator("[data-testid=myName]").innerText()).trim();
+  await matchThem(alice, bob);
+
+  await alice.locator("#addFriend").click();
+  await expect(bob.locator("[data-testid=request]")).toContainText(aliceName);
+  await expect(bob.locator("[data-testid=request]")).not.toContainText("Someone would like");
+});
+
+test("an accepted friend is listed once, under Friends", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+  await say(alice, "keeping you");
+
+  await alice.locator("#addFriend").click();
+  await bob.getByRole("button", { name: "Accept" }).click();
+  await expect(bob.locator("[data-testid=friend]")).toHaveCount(1);
+
+  // Under Friends, and no longer duplicated under Chats.
+  await expect(bob.locator("[data-testid=chat]")).toHaveCount(0);
+});
+
+test("tapping a quote goes to the message it answers", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+
+  await say(alice, "the first thing");
+  await expect(bob.locator("#messages")).toContainText("the first thing");
+  for (let i = 0; i < 12; i += 1) {
+    await say(alice, `filler ${i}`);
+  }
+  await expect(bob.locator("#messages")).toContainText("filler 11");
+
+  const original = bob.locator("[data-testid=message]").filter({ hasText: "the first thing" }).first();
+  await original.click({ button: "right" });
+  await bob.locator("[data-testid=menuReply]").click();
+  await say(bob, "answering the first");
+
+  await expect
+    .poll(async () => original.evaluate((n) => n.getBoundingClientRect().top))
+    .toBeLessThan(0);
+
+  await bob
+    .locator("[data-testid=message]")
+    .filter({ hasText: "answering the first" })
+    .first()
+    .locator("[data-testid=quote]")
+    .click();
+
+  // Back in view, which is the entire point of a quote you can tap.
+  await expect
+    .poll(async () => original.evaluate((n) => n.getBoundingClientRect().top), { timeout: 8000 })
+    .toBeGreaterThan(0);
+});
+
+test("a photo opens full size", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+
+  await alice.locator("#imageInput").setInputFiles({
+    name: "dot.png", mimeType: "image/png", buffer: PNG,
+  });
+  await alice.locator("#sendAttachment").click();
+  await expect(bob.locator("#messages img")).toBeVisible();
+
+  await bob.locator("[data-testid=openImage]").first().click();
+  await expect(bob.locator("#imageViewer")).toBeVisible();
+  await bob.keyboard.press("Escape");
+  await expect(bob.locator("#imageViewer")).toHaveCount(0);
+});
+
+test("interests of your own live in this browser only", async ({ browser }) => {
+  const page = await arrive(browser);
+
+  await page.locator("#myInterestInput").fill("Competitive origami");
+  await page.locator("#addMyInterest").click();
+  await expect(page.locator("[data-testid=myInterest]")).toContainText("Competitive origami");
+
+  // Remembered here...
+  await page.reload();
+  await expect(page.locator("[data-testid=myInterest]")).toContainText("Competitive origami");
+
+  // ...and nowhere else. A second person never sees it.
+  const other = await arrive(browser);
+  await expect(other.locator("[data-testid=myInterest]")).toHaveCount(0);
+});
+
+test("there is no way to shuffle a name", async ({ browser }) => {
+  const page = await arrive(browser);
+  await expect(page.locator("#shuffleName")).toHaveCount(0);
+  await page.locator("#displayName").click();
+  await expect(page.locator("#profileBackdrop")).toBeVisible();
+  await expect(page.locator("#shuffleName")).toHaveCount(0);
+});
+
+test("the camera control is offered next to the paperclip", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+
+  await expect(alice.locator("#attach")).toBeVisible();
+  await expect(alice.locator("#camera")).toBeVisible();
+  await expect(alice.locator("#cameraInput")).toHaveAttribute("capture", "environment");
+});
+
+test("the message menu opens towards the space that exists", async ({ browser }) => {
+  const alice = await arrive(browser);
+  const bob = await arrive(browser);
+  await matchThem(alice, bob);
+
+  // The last message sits at the bottom of the window, where a menu anchored below would be
+  // off-screen -- which is exactly the message people act on most.
+  await say(alice, "the very last one");
+  await expect(bob.locator("#messages")).toContainText("the very last one");
+
+  const bubble = alice.locator("[data-testid=message]").filter({ hasText: "the very last one" }).first();
+  await bubble.click({ button: "right" });
+  const menu = alice.locator("[data-testid=messageMenu]");
+  await expect(menu).toBeVisible();
+
+  const box = (await menu.boundingBox())!;
+  const viewport = alice.viewportSize()!;
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+
+  // And it opens beside the dots that summoned it, not across the bubble.
+  const dots = (await alice.locator("[data-testid=messageMenuButton]").last().boundingBox())!;
+  expect(Math.abs(box.x + box.width / 2 - (dots.x + dots.width / 2))).toBeLessThan(220);
+});

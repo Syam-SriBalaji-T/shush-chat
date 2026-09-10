@@ -48,8 +48,10 @@ test("two strangers match on a shared interest, talk, and keep each other", asyn
   const bob = await arrive(browser);
 
   await matchThem(alice, bob);
-  await expect(alice.locator("#chatHeading")).toContainText(/you both like/i);
-  await expect(alice.locator("#chatHeading")).not.toContainText(/random/i);
+  // The heading is who you are talking to; why you were put together is underneath it.
+  await expect(alice.locator("#chatSub")).toContainText(/you both like/i);
+  await expect(alice.locator("#chatSub")).not.toContainText(/random/i);
+  await expect(alice.locator("#chatHeading")).not.toHaveText("");
 
   await alice.locator("#composer").fill("hello from alice");
   await alice.locator("#send").click();
@@ -136,23 +138,6 @@ test("unread counts, and removing a friend makes them matchable again", async ({
   await alice.locator("#home").click();
   await bob.locator("#home").click();
   await matchThem(alice, bob);
-});
-
-test("shuffling a name lives in the profile, not on the way to a conversation", async ({
-  browser,
-}) => {
-  const page = await arrive(browser);
-
-  // Not on the pre-match screen: a fresh identity one click from anyone who has just been
-  // unpleasant under the old one is the whole reason it moved.
-  await expect(page.locator("#findSomeone")).toBeVisible();
-  await expect(page.locator("#shuffleName")).toHaveCount(0);
-
-  const before = await page.locator("#displayName").innerText();
-  await page.locator("#displayName").click();
-  await expect(page.locator("#profileBackdrop")).toBeVisible();
-  await page.locator("#shuffleName").click();
-  await expect(page.locator("#profileName")).not.toHaveText(before);
 });
 
 test("five interests, then all of them, then five again", async ({ browser }) => {

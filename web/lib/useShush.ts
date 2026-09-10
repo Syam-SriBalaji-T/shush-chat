@@ -18,6 +18,32 @@ import type {
 } from "./types";
 
 const DEVICE_TOKEN = "shush.deviceToken";
+const MY_INTERESTS = "shush.myInterests";
+
+/**
+ * Interests of your own, kept in this browser and nowhere else.
+ *
+ * <p>Deliberately not sent anywhere. The matcher works on a controlled vocabulary -- both sides
+ * draw from the same fixed list, which is what makes "you both like Music" a fact rather than a
+ * guess -- and a tag only one person has cannot match anyone by construction. So these are for
+ * saying what you are into when the list does not have it, and they stay on this machine.
+ */
+const readMyInterests = (): string[] => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MY_INTERESTS) ?? "[]");
+    return Array.isArray(stored) ? stored.filter((one) => typeof one === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeMyInterests = (values: string[]) => {
+  try {
+    localStorage.setItem(MY_INTERESTS, JSON.stringify(values));
+  } catch {
+    // Private browsing. They simply will not be remembered, which is not worth failing over.
+  }
+};
 
 const remember = (token: string) => {
   try {
@@ -54,6 +80,7 @@ export const useShush = () => {
     all: [],
   });
   const [selected, setSelected] = useState<number[]>([]);
+  const [myInterests, setMyInterests] = useState<string[]>([]);
   const [patience, setPatience] = useState(5);
   const [nodeId, setNodeId] = useState<string | null>(null);
   const [findStatus, setFindStatus] = useState("");
@@ -63,6 +90,9 @@ export const useShush = () => {
   const [peer, setPeer] = useState<Peer>({ userId: null, name: null, heading: "", sub: "" });
   const [isFriendConversation, setIsFriendConversation] = useState(false);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  // Somebody walked out. The server decides this and says so in a frame; the client never
+  // assumes it, which is exactly what went wrong when one side printed "You left" on its own.
+  const [ended, setEnded] = useState(false);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
 
   const socket = useRef<WebSocket | null>(null);
@@ -124,6 +154,28 @@ export const useShush = () => {
     await Promise.all([reloadFriends(), reloadConversations()]);
   }, [reloadConversations, reloadFriends]);
 
+  /**
+   * Keeps the sidebar preview current without a request per message.
+   *
+   * <p>The lists are re-read when something happens to them, which leaves the row for the
+   * conversation you are actually looking at showing whatever it said when you signed in --
+   * "Nothing said yet" under a thread you are in the middle of.
+   */
+  const previewLocally = useCallback((message: Message, mine: boolean) => {
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === message.conversationId
+          ? {
+              ...conversation,
+              lastMessage: message.kind === "image" ? "Photo" : message.body,
+              lastFromMe: mine,
+              lastAt: new Date(message.createdAt).toISOString(),
+            }
+          : conversation,
+      ),
+    );
+  }, []);
+
   /** Adds a day separator when the calendar day changes, then the message itself. */
   const appendMessage = useCallback((message: Message, delivery: Delivery) => {
     setItems((current) => {
@@ -172,6 +224,7 @@ export const useShush = () => {
     setPeer(next);
     setIsFriendConversation(friendConversation);
     setReplyingTo(null);
+    setEnded(false);
     setView("chat");
     viewRef.current = "chat";
     setFindStatus("");
@@ -199,11 +252,13 @@ export const useShush = () => {
           String(frame.conversationId),
           {
             userId: String(frame.withUserId),
-            name: null,
-            heading: frame.randomMatch
+            name: (frame.withDisplayName as string | null) ?? null,
+            // Their name heads the conversation; why you were put together is the subtitle.
+            // "A stranger" is not a name, it is the app declining to say who this is.
+            heading: (frame.withDisplayName as string | null) ?? "Someone",
+            sub: frame.randomMatch
               ? "A random match — nobody sharing your interests was around"
               : `You both like ${labels.join(" and ")}`,
-            sub: "A stranger",
           },
           false,
         );
@@ -243,6 +298,7 @@ export const useShush = () => {
         }
         if (message.seq !== null) seen.current.add(message.seq);
 
+        previewLocally(message, mine);
         if (mine) {
           const delivery: Delivery =
             (message.seq ?? 0) <= peerReadSeq.current ? "read" : "delivered";
@@ -338,7 +394,19 @@ export const useShush = () => {
       }
 
       if (type === "left") {
-        appendEvent("They have left. This conversation is over.");
+        // Scoped to the conversation it belongs to. Without this a leave in one thread printed
+        // itself into whichever thread happened to be open.
+        if (String(frame.conversationId) !== conversationRef.current) {
+          void refreshLists();
+          return;
+        }
+        setEnded(true);
+        appendEvent(
+          String(frame.userId) === meRef.current
+            ? "You left. This conversation is over."
+            : "They have left. This conversation is over.",
+        );
+        void refreshLists();
         return;
       }
 
@@ -363,6 +431,7 @@ export const useShush = () => {
       interests.all,
       openConversation,
       patchMessage,
+      previewLocally,
       refreshLists,
       reloadRequests,
       send,
@@ -394,6 +463,8 @@ export const useShush = () => {
     if (next.token) remember(next.token);
     setSession(next);
     meRef.current = next.user.id;
+
+    setMyInterests(readMyInterests());
 
     const catalogue = await api.interests();
     setInterests({ suggested: catalogue.suggested, all: catalogue.all });
@@ -520,7 +591,7 @@ export const useShush = () => {
   const sendMessage = useCallback(
     (body: string) => {
       const text = body.trim();
-      if (!text || !conversationId) return;
+      if (!text || !conversationId || ended) return;
       const clientMsgId = newId();
       const replyToSeq = replyingTo?.seq ?? null;
       optimistic.current.add(clientMsgId);
@@ -544,7 +615,7 @@ export const useShush = () => {
       send({ type: "send", conversationId, clientMsgId, kind: "text", body: text, replyToSeq });
       setReplyingTo(null);
     },
-    [appendMessage, conversationId, replyingTo, send],
+    [appendMessage, conversationId, ended, replyingTo, send],
   );
 
   /** Chosen but not sent: the preview is what turns picking a file into a decision. */
@@ -561,7 +632,7 @@ export const useShush = () => {
 
   const sendAttachment = useCallback(
     async (caption: string) => {
-      if (!attachment || !conversationId) return;
+      if (!attachment || !conversationId || ended) return;
       const { file } = attachment;
       clearAttachment();
 
@@ -604,7 +675,7 @@ export const useShush = () => {
       }
       setReplyingTo(null);
     },
-    [appendEvent, attachment, clearAttachment, conversationId, replyingTo, send],
+    [appendEvent, attachment, clearAttachment, conversationId, ended, replyingTo, send],
   );
 
   /* ---------- acting on one message ---------- */
@@ -669,9 +740,11 @@ export const useShush = () => {
 
   const leave = useCallback(() => {
     if (!conversationId) return;
+    // No optimistic line. The server answers with a `left` frame and both screens render from
+    // that one fact -- saying "You left" here is how one side ended up sure of something the
+    // other side had never been told.
     send({ type: "leave", conversationId });
-    appendEvent("You left.");
-  }, [appendEvent, conversationId, send]);
+  }, [conversationId, send]);
 
   const askToKeep = useCallback(async () => {
     if (!conversationId) return;
@@ -683,15 +756,6 @@ export const useShush = () => {
     );
   }, [appendEvent, conversationId]);
 
-  const shuffleName = useCallback(async () => {
-    const response = await api.shuffleName();
-    if (response.status === 429) return "One at a time.";
-    const user = (await response.json()) as { displayName: string };
-    setSession((current) =>
-      current ? { ...current, user: { ...current.user, displayName: user.displayName } } : current,
-    );
-    return "";
-  }, []);
 
   const removeFriend = useCallback(
     async (userId: string) => {
@@ -710,6 +774,25 @@ export const useShush = () => {
     [peer.userId, refreshLists],
   );
 
+  const addMyInterest = useCallback((label: string) => {
+    const trimmed = label.trim().slice(0, 40);
+    if (!trimmed) return;
+    setMyInterests((current) => {
+      if (current.some((one) => one.toLowerCase() === trimmed.toLowerCase())) return current;
+      const next = [...current, trimmed];
+      writeMyInterests(next);
+      return next;
+    });
+  }, []);
+
+  const removeMyInterest = useCallback((label: string) => {
+    setMyInterests((current) => {
+      const next = current.filter((one) => one !== label);
+      writeMyInterests(next);
+      return next;
+    });
+  }, []);
+
   const goHome = useCallback(() => {
     setView("setup");
     setFindStatus("");
@@ -718,6 +801,15 @@ export const useShush = () => {
     // when you signed in.
     void refreshLists();
   }, [refreshLists]);
+
+  // A friend has a row under Friends already, so listing them again under Chats is the same
+  // conversation in two places. Decided by who is currently a friend rather than by the
+  // conversation's kind: kind is set when a friendship is made and never unset, so filtering on
+  // it made an unfriended person vanish from both lists instead of moving between them.
+  const strangerConversations = useMemo(() => {
+    const friendIds = new Set(friends.map((friend) => friend.userId));
+    return conversations.filter((conversation) => !friendIds.has(conversation.peerId));
+  }, [conversations, friends]);
 
   const currentFriend = useMemo(
     () => friends.find((friend) => friend.userId === peer.userId) ?? null,
@@ -739,10 +831,13 @@ export const useShush = () => {
     view,
     friends,
     requests,
-    conversations,
+    conversations: strangerConversations,
     interests,
     selected,
     setSelected,
+    myInterests,
+    addMyInterest,
+    removeMyInterest,
     patience,
     setPatience,
     nodeId,
@@ -750,6 +845,7 @@ export const useShush = () => {
     typing,
     items,
     conversationId,
+    ended,
     peer,
     currentFriend,
     isFriendConversation,
@@ -770,7 +866,6 @@ export const useShush = () => {
     notifyTyping,
     leave,
     askToKeep,
-    shuffleName,
     removeFriend,
     goHome,
     reloadFriends,

@@ -12,6 +12,7 @@ export const ChatPanel = ({
   meId,
   typing,
   isFriendConversation,
+  ended,
   replyingTo,
   quotedFor,
   onOpenPeer,
@@ -25,12 +26,16 @@ export const ChatPanel = ({
   onReact,
   onDeleteForEveryone,
   onHideForMe,
+  onOpenImage,
+  onFindSomeone,
+  setupPanel,
 }: {
   peer: Peer;
   items: ChatItem[];
   meId: string | undefined;
   typing: boolean;
   isFriendConversation: boolean;
+  ended: boolean;
   replyingTo: Message | null;
   quotedFor: (seq: number | null | undefined) => Message | null;
   onOpenPeer: () => void;
@@ -44,9 +49,13 @@ export const ChatPanel = ({
   onReact: (message: Message, emoji: string | null) => void;
   onDeleteForEveryone: (message: Message) => void;
   onHideForMe: (message: Message) => void;
+  onOpenImage: (mediaKey: string) => void;
+  onFindSomeone: () => void;
+  setupPanel: React.ReactNode;
 }) => {
   const [draft, setDraft] = useState("");
   const file = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLInputElement>(null);
 
   const submit = () => {
@@ -81,12 +90,16 @@ export const ChatPanel = ({
         {/* Already friends means there is nothing left to ask for, and nothing to walk out of. */}
         {!isFriendConversation && (
           <>
+            {/* Still offered after somebody leaves: asking to keep them is the one thing a
+                finished stranger conversation is still for. */}
             <button id="addFriend" type="button" className="btn-ghost" onClick={onAskToKeep}>
               Add friend
             </button>
-            <button id="leave" type="button" className="btn-ghost" onClick={onLeave}>
-              Leave
-            </button>
+            {!ended && (
+              <button id="leave" type="button" className="btn-ghost" onClick={onLeave}>
+                Leave
+              </button>
+            )}
           </>
         )}
       </div>
@@ -102,6 +115,7 @@ export const ChatPanel = ({
         onReact={onReact}
         onDeleteForEveryone={onDeleteForEveryone}
         onHideForMe={onHideForMe}
+        onOpenImage={onOpenImage}
       />
 
       <p
@@ -141,6 +155,31 @@ export const ChatPanel = ({
         </div>
       )}
 
+      {ended ? (
+        /* No composer, because there is nothing to send into. Straight to the next
+           conversation instead of leaving somebody staring at a dead thread -- the card is
+           here rather than a link to it, so finding the next person is one click. */
+        <div
+          id="endedPanel"
+          className="border-t px-5 py-4"
+          style={{ borderColor: "var(--color-line-soft)" }}
+        >
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <span className="text-[13px]" style={{ color: "var(--color-muted)" }}>
+              This conversation is over.
+            </span>
+            <button
+              id="findSomeoneNext"
+              type="button"
+              className="btn-primary"
+              onClick={onFindSomeone}
+            >
+              Find someone new
+            </button>
+          </div>
+          {setupPanel}
+        </div>
+      ) : (
       <div
         className="flex items-center gap-2.5 border-t px-5 py-3.5"
         style={{ borderColor: "var(--color-line-soft)" }}
@@ -178,6 +217,42 @@ export const ChatPanel = ({
             event.target.value = "";
           }}
         />
+        <button
+          id="camera"
+          type="button"
+          className="btn-ghost grid h-10 w-10 place-items-center rounded-full p-0"
+          title="Take a photo"
+          aria-label="Take a photo"
+          onClick={() => camera.current?.click()}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1.1-1.8A1.5 1.5 0 0 1 9.1 4.5h5.8a1.5 1.5 0 0 1 1.3.7L17.3 7h2.2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z" />
+            <circle cx="12" cy="12.8" r="3.4" />
+          </svg>
+        </button>
+        {/* capture="environment" hands straight to the phone camera; on a desktop the browser
+            falls back to the ordinary file picker, so one control covers both. */}
+        <input
+          id="cameraInput"
+          ref={camera}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(event) => {
+            const chosen = event.target.files?.[0];
+            if (chosen) onChooseImage(chosen);
+            event.target.value = "";
+          }}
+        />
         <input
           id="composer"
           ref={composer}
@@ -199,6 +274,7 @@ export const ChatPanel = ({
           Send
         </button>
       </div>
+      )}
     </div>
   );
 };
