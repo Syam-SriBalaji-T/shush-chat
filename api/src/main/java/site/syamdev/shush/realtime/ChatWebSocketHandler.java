@@ -156,7 +156,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             // would be a lie the client cannot detect, and on a virtual thread the wait costs a
             // carrier thread nothing.
             producer.produce(send.conversationId(), senderId, send.clientMsgId(),
-                    kind, send.body(), send.mediaKey()).join();
+                    kind, send.body(), send.mediaKey(), send.replyToSeq()).join();
 
             // Sending a message means you have stopped typing it.
             typing.clear(send.conversationId(), senderId);

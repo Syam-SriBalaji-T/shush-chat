@@ -35,17 +35,17 @@ class MessageWriter {
 
     @Transactional
     Message write(UUID conversationId, UUID senderId, UUID clientMsgId,
-                  Message.Kind kind, String body, String mediaKey) {
+                  Message.Kind kind, String body, String mediaKey, Long replyToSeq) {
         Long seq = conversations.claimNextSeq(conversationId);
         if (seq == null) {
             throw ApiException.notFound("unknown_conversation", "no such conversation");
         }
 
         Message message = new Message(UUID.randomUUID(), conversationId, senderId, seq,
-                kind, body, mediaKey, clientMsgId, clock.instant());
+                kind, body, mediaKey, clientMsgId, clock.instant(), replyToSeq);
 
         int inserted = messages.insertIfAbsent(message.getId(), conversationId, senderId, seq,
-                kind.wireValue(), body, mediaKey, clientMsgId, message.getCreatedAt());
+                kind.wireValue(), body, mediaKey, clientMsgId, message.getCreatedAt(), replyToSeq);
         if (inserted == 0) {
             throw new DuplicateMessageException();
         }

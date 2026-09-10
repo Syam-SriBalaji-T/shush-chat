@@ -45,11 +45,36 @@ class RetentionJobsIT extends AbstractIT {
     private jakarta.persistence.EntityManagerFactory entityManagerFactory;
 
     /**
-     * Strangers stay strangers. A conversation nobody asked to keep is deleted along with
-     * everything said in it -- retention that is only written down is not retention.
+     * An empty conversation is reaped -- a matched pair who never spoke, or one that ended
+     * before a word was sent. There is no history in it to keep.
      */
     @Test
-    void aConversationNobodyAskedToKeepIsPurged() throws Exception {
+    void aConversationNobodySaidAnythingInIsPurged() {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+        UUID conversationId = testUsers.createConversation(alice, bob);
+
+        // Backdate the purge deadline rather than waiting an hour for it.
+        setPurgeAfterToThePast(conversationId);
+        assertThat(conversations.findById(conversationId)).isPresent();
+
+        jobs.purgeConversations();
+
+        assertThat(conversations.findById(conversationId))
+                .as("nothing was said, so there is nothing to keep")
+                .isEmpty();
+    }
+
+    /**
+     * A stranger conversation with something in it survives, because it is history.
+     *
+     * <p>This reverses pre-plan.md, which had every unkept stranger conversation deleted an
+     * hour after it ended. The owner asked for history of everything, strangers included, and
+     * the change is recorded under Open Choices. The storage cost pre-plan.md was protecting is
+     * images, and those still expire on their own schedule -- see the media test below.
+     */
+    @Test
+    void aStrangerConversationWithMessagesIsKeptAsHistory() throws Exception {
         TestUsers.Session alice = testUsers.newAnonymous();
         TestUsers.Session bob = testUsers.newAnonymous();
         UUID conversationId = testUsers.createConversation(alice, bob);
@@ -59,16 +84,13 @@ class RetentionJobsIT extends AbstractIT {
             aliceWs.awaitAck("delivered");
         }
 
-        // Backdate the purge deadline rather than waiting an hour for it.
         setPurgeAfterToThePast(conversationId);
-        assertThat(conversations.findById(conversationId)).isPresent();
-
         jobs.purgeConversations();
 
         assertThat(conversations.findById(conversationId))
-                .as("the conversation and its messages go together")
-                .isEmpty();
-        assertThat(messageCountFor(conversationId)).isZero();
+                .as("something was said, so it is history rather than rubbish")
+                .isPresent();
+        assertThat(messageCountFor(conversationId)).isEqualTo(1);
     }
 
     @Test

@@ -20,7 +20,9 @@ import java.util.UUID;
         @JsonSubTypes.Type(value = ServerFrame.Left.class, name = "left"),
         @JsonSubTypes.Type(value = ServerFrame.Matched.class, name = "matched"),
         @JsonSubTypes.Type(value = ServerFrame.FriendRequested.class, name = "friendRequested"),
-        @JsonSubTypes.Type(value = ServerFrame.FriendRequestAccepted.class, name = "friendRequestAccepted")
+        @JsonSubTypes.Type(value = ServerFrame.FriendRequestAccepted.class, name = "friendRequestAccepted"),
+        @JsonSubTypes.Type(value = ServerFrame.Reaction.class, name = "reaction"),
+        @JsonSubTypes.Type(value = ServerFrame.Deleted.class, name = "deleted")
 })
 public sealed interface ServerFrame {
 
@@ -46,14 +48,29 @@ public sealed interface ServerFrame {
 
     record MessageFrame(UUID conversationId, UUID messageId, long seq, UUID senderId,
                         String kind, String body, String mediaKey, UUID clientMsgId,
-                        Instant createdAt) implements ServerFrame {
+                        Instant createdAt, Long replyToSeq, boolean deleted)
+            implements ServerFrame {
 
         static MessageFrame of(Message message) {
             return new MessageFrame(message.getConversationId(), message.getId(), message.getSeq(),
                     message.getSenderId(), message.getKind().wireValue(), message.getBody(),
-                    message.getMediaKey(), message.getClientMsgId(), message.getCreatedAt());
+                    message.getMediaKey(), message.getClientMsgId(), message.getCreatedAt(),
+                    message.getReplyToSeq(), message.isDeleted());
         }
     }
+
+    /**
+     * Somebody reacted, or took their reaction back -- {@code emoji} is null for the latter.
+     * One reaction per person per message, so this replaces rather than adds.
+     */
+    record Reaction(UUID conversationId, long seq, UUID userId, String emoji)
+            implements ServerFrame {}
+
+    /**
+     * A message was deleted for everyone. Sent to both sides, because "deleted for everyone"
+     * that only the deleter sees is not what it says.
+     */
+    record Deleted(UUID conversationId, long seq, UUID byUserId) implements ServerFrame {}
 
     record Error(String code, String message, UUID clientMsgId) implements ServerFrame {}
 

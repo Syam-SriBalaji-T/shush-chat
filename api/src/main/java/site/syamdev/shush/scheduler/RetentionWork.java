@@ -39,9 +39,17 @@ class RetentionWork {
     /** Messages and participants go with it: the foreign keys cascade. */
     @Transactional
     int purgeExpiredConversations() {
+        // Only the empty ones. pre-plan.md had every unkept stranger conversation deleted an
+        // hour after it ended; the owner asked for history of everything, including strangers,
+        // so what gets reaped is now conversations nobody actually said anything in -- a
+        // matched pair who never spoke, or one that ended before a word was sent.
+        //
+        // Images are unaffected: purgeMedia still expires them on their own schedule, which is
+        // where the storage cost pre-plan.md was protecting actually lives.
         return entityManager.createNativeQuery("""
-                        delete from conversations
-                        where purge_after is not null and purge_after <= :now
+                        delete from conversations c
+                        where c.purge_after is not null and c.purge_after <= :now
+                          and not exists (select 1 from messages m where m.conversation_id = c.id)
                         """)
                 .setParameter("now", clock.instant())
                 .executeUpdate();

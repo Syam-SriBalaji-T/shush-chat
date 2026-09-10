@@ -77,6 +77,66 @@ public interface ConversationParticipantRepository
             """)
     List<CounterpartRow> findActiveCounterparts(@Param("userId") UUID userId);
 
+    /**
+     * Every conversation this person is in, newest activity first, with the other person and a
+     * preview of the last thing said.
+     *
+     * <p>One query, and a lateral join for the preview rather than a message table scan per
+     * row. A history list that costs N+1 queries is the one that stops working first, and this
+     * is the screen people open every time.
+     */
+    @Query(value = """
+            select c.id                                   as conversationId,
+                   c.kind                                 as kind,
+                   c.state                                as state,
+                   p.unread_count                         as unreadCount,
+                   other.user_id                          as peerId,
+                   u.display_name                         as peerName,
+                   last.body                              as lastBody,
+                   last.kind                              as lastKind,
+                   last.sender_id                         as lastSenderId,
+                   last.created_at                        as lastAt,
+                   coalesce(last.created_at, c.created_at) as activityAt
+            from conversation_participants p
+            join conversations c              on c.id = p.conversation_id
+            join conversation_participants other
+                                              on other.conversation_id = c.id
+                                             and other.user_id <> p.user_id
+            join users u                      on u.id = other.user_id
+            left join lateral (
+                select m.body, m.kind, m.sender_id, m.created_at
+                from messages m
+                where m.conversation_id = c.id and m.deleted_at is null
+                order by m.seq desc
+                limit 1
+            ) last on true
+            where p.user_id = :userId
+            order by coalesce(last.created_at, c.created_at) desc
+            """, nativeQuery = true)
+    List<ConversationSummaryRow> findConversationSummaries(@Param("userId") UUID userId);
+
+    interface ConversationSummaryRow {
+        UUID getConversationId();
+
+        String getKind();
+
+        String getState();
+
+        int getUnreadCount();
+
+        UUID getPeerId();
+
+        String getPeerName();
+
+        String getLastBody();
+
+        String getLastKind();
+
+        UUID getLastSenderId();
+
+        Instant getLastAt();
+    }
+
     interface CounterpartRow {
         UUID getConversationId();
 

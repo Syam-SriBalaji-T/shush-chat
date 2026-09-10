@@ -32,10 +32,12 @@ public class MessageService {
      *         already been accepted for this sender in this conversation
      */
     public Append append(UUID conversationId, UUID senderId, UUID clientMsgId,
-                         Message.Kind kind, String body, String mediaKey) {
+                         Message.Kind kind, String body, String mediaKey, Long replyToSeq) {
         validate(kind, body);
         try {
-            return new Append(writer.write(conversationId, senderId, clientMsgId, kind, body, mediaKey), false);
+            return new Append(
+                    writer.write(conversationId, senderId, clientMsgId, kind, body, mediaKey, replyToSeq),
+                    false);
         } catch (DuplicateMessageException duplicate) {
             // The write rolled back, releasing its sequence number. The winner is committed.
             return new Append(existing(conversationId, senderId, clientMsgId), true);

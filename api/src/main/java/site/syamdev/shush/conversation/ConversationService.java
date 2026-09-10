@@ -97,6 +97,12 @@ public class ConversationService {
         }
     }
 
+    /** Every conversation this person has had, newest first. See the query for why one call. */
+    @Transactional(readOnly = true)
+    public List<ConversationParticipantRepository.ConversationSummaryRow> historyFor(UUID userId) {
+        return participants.findConversationSummaries(userId);
+    }
+
     /**
      * Unread counts for several conversations at once, keyed by conversation.
      *

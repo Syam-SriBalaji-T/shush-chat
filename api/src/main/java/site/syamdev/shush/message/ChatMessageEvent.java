@@ -18,5 +18,6 @@ public record ChatMessageEvent(UUID conversationId,
                                String kind,
                                String body,
                                String mediaKey,
+                               Long replyToSeq,
                                Instant producedAt) {
 }

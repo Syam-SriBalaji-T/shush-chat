@@ -26,7 +26,8 @@ public sealed interface ClientFrame {
      * @param clientMsgId the idempotency key, stable across the client's retries of one logical
      *                    send. The server never generates it.
      */
-    record Send(UUID conversationId, UUID clientMsgId, String kind, String body, String mediaKey)
+    record Send(UUID conversationId, UUID clientMsgId, String kind, String body, String mediaKey,
+                Long replyToSeq)
             implements ClientFrame {
     }
 

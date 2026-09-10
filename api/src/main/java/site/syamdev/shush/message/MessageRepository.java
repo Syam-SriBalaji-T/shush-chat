@@ -39,9 +39,9 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
     @Modifying
     @Query(value = """
             insert into messages (id, conversation_id, sender_id, seq, kind, body, media_key,
-                                  client_msg_id, created_at)
+                                  client_msg_id, created_at, reply_to_seq)
             values (:id, :conversationId, :senderId, :seq, :kind, :body, :mediaKey,
-                    :clientMsgId, :createdAt)
+                    :clientMsgId, :createdAt, :replyToSeq)
             on conflict (conversation_id, sender_id, client_msg_id) do nothing
             """, nativeQuery = true)
     int insertIfAbsent(@Param("id") UUID id,
@@ -52,5 +52,6 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
                        @Param("body") String body,
                        @Param("mediaKey") String mediaKey,
                        @Param("clientMsgId") UUID clientMsgId,
-                       @Param("createdAt") Instant createdAt);
+                       @Param("createdAt") Instant createdAt,
+                       @Param("replyToSeq") Long replyToSeq);
 }

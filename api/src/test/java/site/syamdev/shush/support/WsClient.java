@@ -56,6 +56,14 @@ public class WsClient implements AutoCloseable {
                 .formatted(conversationId, clientMsgId, body));
     }
 
+    /** A reply carries the seq it answers; everything else about a send is unchanged. */
+    public void sendReply(UUID conversationId, UUID clientMsgId, String body, long replyToSeq)
+            throws IOException {
+        send(("{\"type\":\"send\",\"conversationId\":\"%s\",\"clientMsgId\":\"%s\","
+                + "\"kind\":\"text\",\"body\":\"%s\",\"replyToSeq\":%d}")
+                .formatted(conversationId, clientMsgId, body, replyToSeq));
+    }
+
     /** Waits for the next frame of this type, putting anything it passed over back afterwards. */
     public JsonNode await(String type) throws InterruptedException {
         return await(type, frame -> true, "type=" + type);

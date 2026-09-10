@@ -39,11 +39,29 @@ public class Message {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /** The seq this replies to, in the same conversation. Null when it replies to nothing. */
+    @Column(name = "reply_to_seq")
+    private Long replyToSeq;
+
+    /**
+     * Deleted for everyone. The row survives because seq is dense by design -- removing one
+     * would leave a gap the ordering harness reads as a lost message -- but the body does not.
+     */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     protected Message() {
     }
 
     public Message(UUID id, UUID conversationId, UUID senderId, long seq, Kind kind,
                    String body, String mediaKey, UUID clientMsgId, Instant createdAt) {
+        this(id, conversationId, senderId, seq, kind, body, mediaKey, clientMsgId, createdAt, null);
+    }
+
+    public Message(UUID id, UUID conversationId, UUID senderId, long seq, Kind kind,
+                   String body, String mediaKey, UUID clientMsgId, Instant createdAt,
+                   Long replyToSeq) {
+        this.replyToSeq = replyToSeq;
         this.id = id;
         this.conversationId = conversationId;
         this.senderId = senderId;
@@ -53,6 +71,25 @@ public class Message {
         this.mediaKey = mediaKey;
         this.clientMsgId = clientMsgId;
         this.createdAt = createdAt;
+    }
+
+    public Long getReplyToSeq() {
+        return replyToSeq;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    /** Keeps the row and the sequence, drops what was said. */
+    public void deleteForEveryone(Instant when) {
+        this.deletedAt = when;
+        this.body = null;
+        this.mediaKey = null;
     }
 
     public UUID getId() {

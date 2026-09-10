@@ -62,7 +62,8 @@ class ChatWriterConsumer {
         MessageService.Append append;
         try {
             append = messages.append(event.conversationId(), event.senderId(), event.clientMsgId(),
-                    Message.Kind.fromWire(event.kind()), event.body(), event.mediaKey());
+                    Message.Kind.fromWire(event.kind()), event.body(), event.mediaKey(),
+                    event.replyToSeq());
         } catch (ApiException rejected) {
             // A message whose conversation is gone, or whose body the writer refuses, can never
             // succeed on redelivery. Retrying it would stall its partition -- and with it every

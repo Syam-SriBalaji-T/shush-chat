@@ -13,7 +13,7 @@
 > **Generated — do not edit.** Change the schema by adding a migration under
 > `api/src/main/resources/db/migration/`, then run `cd api && ./mvnw verify`.
 
-Generated 2026-09-09 from 14 tables.
+Generated 2026-09-10 from 16 tables.
 
 ## Migrations applied
 
@@ -25,6 +25,7 @@ Generated 2026-09-09 from 14 tables.
 | `V4` | seed interests | yes |
 | `V5` | friend request declined | yes |
 | `V6` | cors origins | yes |
+| `V7` | message interactions | yes |
 
 ---
 
@@ -264,6 +265,45 @@ Generated 2026-09-09 from 14 tables.
 - `media_objects_expires_at_idx` — `CREATE INDEX media_objects_expires_at_idx ON public.media_objects USING btree (expires_at)`
 - `media_objects_status_created_at_idx` — `CREATE INDEX media_objects_status_created_at_idx ON public.media_objects USING btree (status, created_at)`
 
+### `message_hides`
+
+| Column | Type | Null | Default |
+| --- | --- | --- | --- |
+| `message_id` | `uuid` | no | — |
+| `user_id` | `uuid` | no | — |
+| `created_at` | `timestamp with time zone` | no | — |
+
+**Primary key**
+
+- `message_hides_pkey` — `PRIMARY KEY (message_id, user_id)`
+
+**Foreign keys**
+
+- `message_hides_message_id_fkey` — `FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE`
+- `message_hides_user_id_fkey` — `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`
+
+### `message_reactions`
+
+| Column | Type | Null | Default |
+| --- | --- | --- | --- |
+| `message_id` | `uuid` | no | — |
+| `user_id` | `uuid` | no | — |
+| `emoji` | `text` | no | — |
+| `created_at` | `timestamp with time zone` | no | — |
+
+**Primary key**
+
+- `message_reactions_pkey` — `PRIMARY KEY (message_id, user_id)`
+
+**Foreign keys**
+
+- `message_reactions_message_id_fkey` — `FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE`
+- `message_reactions_user_id_fkey` — `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `message_reactions_message_idx` — `CREATE INDEX message_reactions_message_idx ON public.message_reactions USING btree (message_id)`
+
 ### `messages`
 
 | Column | Type | Null | Default |
@@ -277,6 +317,8 @@ Generated 2026-09-09 from 14 tables.
 | `media_key` | `text` | yes | — |
 | `client_msg_id` | `uuid` | no | — |
 | `created_at` | `timestamp with time zone` | no | — |
+| `reply_to_seq` | `bigint` | yes | — |
+| `deleted_at` | `timestamp with time zone` | yes | — |
 
 **Primary key**
 
@@ -295,6 +337,11 @@ Generated 2026-09-09 from 14 tables.
 **Checks**
 
 - `messages_kind_check` — `CHECK ((kind = ANY (ARRAY['text'::text, 'image'::text, 'system'::text])))`
+- `messages_reply_to_seq_check` — `CHECK (((reply_to_seq IS NULL) OR (reply_to_seq > 0)))`
+
+**Indexes**
+
+- `messages_conversation_reply_to_idx` — `CREATE INDEX messages_conversation_reply_to_idx ON public.messages USING btree (conversation_id, reply_to_seq) WHERE (reply_to_seq IS NOT NULL)`
 
 ### `reports`
 

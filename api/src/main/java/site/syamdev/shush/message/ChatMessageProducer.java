@@ -36,9 +36,10 @@ public class ChatMessageProducer {
     }
 
     public CompletableFuture<Void> produce(UUID conversationId, UUID senderId, UUID clientMsgId,
-                                           Message.Kind kind, String body, String mediaKey) {
+                                           Message.Kind kind, String body, String mediaKey,
+                                           Long replyToSeq) {
         ChatMessageEvent event = new ChatMessageEvent(conversationId, senderId, clientMsgId,
-                kind.wireValue(), body, mediaKey, clock.instant());
+                kind.wireValue(), body, mediaKey, replyToSeq, clock.instant());
 
         // The key is the conversation id and nothing else. This single line is where the
         // ordering guarantee comes from; everything downstream only has to avoid losing it.
