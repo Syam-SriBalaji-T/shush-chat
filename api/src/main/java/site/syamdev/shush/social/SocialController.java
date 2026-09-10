@@ -46,12 +46,22 @@ class SocialController {
 
     @PostMapping("/conversations/{conversationId}/friend-request")
     FriendRequestView requestFriend(@PathVariable UUID conversationId) {
-        return FriendRequestView.of(social.requestFriend(conversationId, currentUser.requireId()));
+        UUID callerId = currentUser.requireId();
+        return FriendRequestView.of(social.requestFriend(conversationId, callerId),
+                users.findById(callerId).map(User::getDisplayName).orElse(null));
     }
 
     @GetMapping("/friend-requests")
     List<FriendRequestView> pending() {
-        return social.pendingFor(currentUser.requireId()).stream().map(FriendRequestView::of).toList();
+        List<FriendRequest> requests = social.pendingFor(currentUser.requireId());
+        // Their name, not "Someone". Deciding whether to keep a person you just talked to is
+        // impossible if the app will not say which person it means -- and it already knows.
+        Map<UUID, String> names = users.findAllById(
+                        requests.stream().map(FriendRequest::getFromUserId).toList()).stream()
+                .collect(Collectors.toMap(User::getId, User::getDisplayName));
+        return requests.stream()
+                .map(request -> FriendRequestView.of(request, names.get(request.getFromUserId())))
+                .toList();
     }
 
     @PostMapping("/friend-requests/{requestId}/accept")
@@ -133,12 +143,12 @@ class SocialController {
                          @NotBlank @Size(max = 500) String reason) {
     }
 
-    record FriendRequestView(UUID id, UUID conversationId, UUID fromUserId, UUID toUserId,
-                             String status, Instant expiresAt) {
+    record FriendRequestView(UUID id, UUID conversationId, UUID fromUserId, String fromDisplayName,
+                             UUID toUserId, String status, Instant expiresAt) {
 
-        static FriendRequestView of(FriendRequest request) {
+        static FriendRequestView of(FriendRequest request, String fromDisplayName) {
             return new FriendRequestView(request.getId(), request.getConversationId(),
-                    request.getFromUserId(), request.getToUserId(),
+                    request.getFromUserId(), fromDisplayName, request.getToUserId(),
                     request.getStatus().wireValue(), request.getExpiresAt());
         }
     }

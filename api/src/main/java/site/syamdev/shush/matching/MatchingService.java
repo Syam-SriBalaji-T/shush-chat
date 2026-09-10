@@ -12,6 +12,8 @@ import site.syamdev.shush.realtime.BackplanePublisher;
 import site.syamdev.shush.realtime.ServerFrame;
 import site.syamdev.shush.social.SocialGraph;
 import site.syamdev.shush.user.InterestService;
+import site.syamdev.shush.user.User;
+import site.syamdev.shush.user.UserRepository;
 
 import java.io.IOException;
 import java.time.Clock;
@@ -19,6 +21,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -43,19 +47,21 @@ public class MatchingService {
     private final ConversationService conversations;
     private final SocialGraph social;
     private final InterestService interests;
+    private final UserRepository users;
     private final BackplanePublisher backplane;
     private final Clock clock;
     private final Counter matchedOnInterests;
     private final Counter matchedAtRandom;
 
     MatchingService(WaitPool pool, WaitingIndex index, ConversationService conversations,
-                    SocialGraph social, InterestService interests,
+                    SocialGraph social, InterestService interests, UserRepository users,
                     BackplanePublisher backplane, Clock clock, MeterRegistry meters) {
         this.pool = pool;
         this.index = index;
         this.conversations = conversations;
         this.social = social;
         this.interests = interests;
+        this.users = users;
         this.backplane = backplane;
         this.clock = clock;
         this.matchedOnInterests = Counter.builder("shush.matches").tag("kind", "interests")
@@ -179,12 +185,23 @@ public class MatchingService {
     }
 
     private void announce(Match match) {
-        List.of(match.firstUserId(), match.secondUserId()).forEach(userId ->
-                backplane.publish(userId, new ServerFrame.Matched(
-                        match.conversationId(),
-                        userId.equals(match.firstUserId()) ? match.secondUserId() : match.firstUserId(),
-                        match.sharedInterestIds(),
-                        match.sharedInterestIds() == null)));
+        // Both names in one lookup. The client needs the other person's name to head the
+        // conversation with, and "A stranger" is not a name -- it is the app refusing to say.
+        Map<UUID, String> names = users.findAllById(
+                        List.of(match.firstUserId(), match.secondUserId())).stream()
+                .collect(Collectors.toMap(User::getId, User::getDisplayName));
+
+        List.of(match.firstUserId(), match.secondUserId()).forEach(userId -> {
+            UUID otherId = userId.equals(match.firstUserId())
+                    ? match.secondUserId()
+                    : match.firstUserId();
+            backplane.publish(userId, new ServerFrame.Matched(
+                    match.conversationId(),
+                    otherId,
+                    names.get(otherId),
+                    match.sharedInterestIds(),
+                    match.sharedInterestIds() == null));
+        });
     }
 
     private Set<UUID> excludedFor(UUID userId) {

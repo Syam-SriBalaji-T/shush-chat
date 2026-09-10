@@ -185,6 +185,64 @@ class MessageInteractionIT extends AbstractIT {
         assertThat(summary.path("unreadCount").asInt()).isEqualTo(1);
     }
 
+    /**
+     * Leaving has to reach the other person, and it has to end the conversation for real.
+     *
+     * <p>Both halves failed together: the server told nobody when the conversation had already
+     * ended, and nothing refused a send afterwards -- so one side saw "You left" while the
+     * other saw nothing and could keep typing into a conversation that was over.
+     */
+    @Test
+    void leavingTellsBothSidesAndClosesTheConversation() throws Exception {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+        UUID conversationId = testUsers.createConversation(alice, bob);
+
+        try (WsClient aliceWs = WsClient.connect(port, alice.jwt());
+             WsClient bobWs = WsClient.connect(port, bob.jwt())) {
+            aliceWs.await("hello");
+            bobWs.await("hello");
+
+            aliceWs.send("{\"type\":\"leave\",\"conversationId\":\"%s\"}".formatted(conversationId));
+
+            assertThat(bobWs.await("left").path("userId").asText())
+                    .as("the person still sitting there is told, by the server, not by a guess")
+                    .isEqualTo(alice.userId().toString());
+            assertThat(aliceWs.await("left").path("conversationId").asText())
+                    .as("and so is the leaver, from the same frame rather than their own optimism")
+                    .isEqualTo(conversationId.toString());
+
+            bobWs.sendText(conversationId, UUID.randomUUID(), "are you still there");
+            JsonNode refused = bobWs.await("error");
+            assertThat(refused.path("code").asText())
+                    .as("a conversation somebody walked out of is over")
+                    .isEqualTo("conversation_ended");
+        }
+
+        // Asking to keep them is the one thing still allowed afterwards.
+        assertThat(rest.exchange("/api/conversations/" + conversationId + "/friend-request",
+                HttpMethod.POST, new HttpEntity<>(testUsers.authorised(bob)), JsonNode.class)
+                .getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+    }
+
+    /** "Someone would like to keep you" is unanswerable. The app knows the name. */
+    @Test
+    void aFriendRequestSaysWhoItIsFrom() {
+        TestUsers.Session alice = testUsers.newAnonymous();
+        TestUsers.Session bob = testUsers.newAnonymous();
+        UUID conversationId = testUsers.createConversation(alice, bob);
+
+        rest.exchange("/api/conversations/" + conversationId + "/friend-request", HttpMethod.POST,
+                new HttpEntity<>(testUsers.authorised(alice)), JsonNode.class);
+
+        JsonNode pending = rest.exchange("/api/friend-requests", HttpMethod.GET,
+                new HttpEntity<>(testUsers.authorised(bob)), JsonNode.class).getBody();
+        assertThat(pending).hasSize(1);
+        assertThat(pending.get(0).path("fromDisplayName").asText())
+                .isEqualTo(alice.displayName());
+    }
+
     private ResponseEntity<Void> react(String messageId, TestUsers.Session caller, String emoji) {
         return rest.exchange("/api/messages/" + messageId + "/reaction", HttpMethod.PUT,
                 new HttpEntity<>(Map.of("emoji", emoji), testUsers.authorised(caller)), Void.class);

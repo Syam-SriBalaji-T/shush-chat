@@ -109,7 +109,8 @@ public sealed interface ServerFrame {
      *                          two this was and presenting a random match as an interest match
      *                          is a lie the user notices as soon as they start talking
      */
-    record Matched(UUID conversationId, UUID withUserId, List<Short> sharedInterestIds,
+    record Matched(UUID conversationId, UUID withUserId, String withDisplayName,
+                   List<Short> sharedInterestIds,
                    boolean randomMatch) implements ServerFrame {
     }
 

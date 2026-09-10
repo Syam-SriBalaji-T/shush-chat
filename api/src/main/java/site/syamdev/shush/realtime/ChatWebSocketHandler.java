@@ -145,6 +145,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
         try {
             conversations.requireParticipant(send.conversationId(), senderId);
+            // A conversation somebody walked out of is over. Without this, "leave" is a label.
+            conversations.requireActive(send.conversationId());
             Message.Kind kind = send.kind() == null ? Message.Kind.TEXT : Message.Kind.fromWire(send.kind());
             if (kind == Message.Kind.IMAGE && (send.mediaKey() == null || send.mediaKey().isBlank())) {
                 replyTo(senderId, new ServerFrame.Error("missing_media_key",
@@ -196,13 +198,22 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private void handleLeave(UUID senderId, ClientFrame.Leave leave) {
         conversations.requireParticipant(leave.conversationId(), senderId);
-        if (!conversations.leave(leave.conversationId(), senderId)) {
-            return;
-        }
+        boolean endedByThisCall = conversations.leave(leave.conversationId(), senderId);
+
         // "Left", not "offline": this one is final, and the other person is told so
         // (pre-plan.md 3). The distinction is the whole reason these are separate frames.
-        publishToCounterparts(leave.conversationId(), senderId,
-                new ServerFrame.Left(leave.conversationId(), senderId));
+        //
+        // Sent to everyone, the leaver included, and sent even when the conversation had
+        // already ended. Both matter: a client that prints "you left" on its own say-so is
+        // claiming something the server may not have done -- which is exactly how one side saw
+        // "You left." while the other saw nothing at all and kept typing into a dead
+        // conversation. One frame, one source of truth, both screens.
+        ServerFrame.Left left = new ServerFrame.Left(leave.conversationId(), senderId);
+        if (endedByThisCall) {
+            publisher.publish(conversations.participantIds(leave.conversationId()), left);
+        } else {
+            replyTo(senderId, left);
+        }
     }
 
     private void publishToCounterparts(UUID conversationId, UUID senderId, ServerFrame frame) {

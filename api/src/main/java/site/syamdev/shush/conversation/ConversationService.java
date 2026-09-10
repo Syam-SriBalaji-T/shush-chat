@@ -88,6 +88,24 @@ public class ConversationService {
                 .orElseThrow(() -> ApiException.notFound("unknown_conversation", "no such conversation"));
     }
 
+    /**
+     * Refuses anything but talking in a conversation that is still open.
+     *
+     * <p>Once either person leaves, a stranger conversation is over -- which has to mean it is
+     * over. Being able to keep sending into it makes "leave" a suggestion, and on a service
+     * whose whole promise is that a stranger conversation ends when somebody ends it, that is
+     * not a cosmetic gap. Asking to keep them is still allowed; that is the one thing left.
+     */
+    @Transactional(readOnly = true)
+    public void requireActive(UUID conversationId) {
+        Conversation conversation = conversations.findById(conversationId)
+                .orElseThrow(() -> ApiException.notFound("unknown_conversation", "no such conversation"));
+        if (conversation.getState() == Conversation.State.ENDED) {
+            throw new ApiException(org.springframework.http.HttpStatus.CONFLICT, "conversation_ended",
+                    "this conversation is over");
+        }
+    }
+
     @Transactional(readOnly = true)
     public void requireParticipant(UUID conversationId, UUID userId) {
         if (!participants.existsByConversationIdAndUserId(conversationId, userId)) {
