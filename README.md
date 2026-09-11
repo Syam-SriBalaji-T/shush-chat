@@ -14,7 +14,7 @@ Everything else in the system exists to force that problem into the open.
 
 ```bash
 # 1. shared infrastructure, once
-git clone git@github.com:Syam-SriBalaji-T/syamdev-platform.git && cd syamdev-platform
+git clone git@github.com:shipyardworks/platform.git && cd platform
 cp .env.example .env && ./bootstrap.sh
 for s in data streaming search edge; do
   docker compose --env-file .env -f $s/compose.yaml up -d
@@ -446,8 +446,8 @@ never a production secret store.
 ## 8. Running it
 
 Infrastructure is shared with every other app on the box and lives in
-[`syamdev-platform`](https://github.com/Syam-SriBalaji-T/syamdev-platform); metrics live in
-[`syamdev-observability`](https://github.com/Syam-SriBalaji-T/syamdev-observability). This repo
+[`platform`](https://github.com/shipyardworks/platform); metrics live in
+[`observability`](https://github.com/shipyardworks/observability). This repo
 contains the application, the harness and the client — nothing stateful.
 
 > **This deliberately gives up R7.** Earlier versions shipped a self-contained `compose.yaml` so
@@ -457,7 +457,7 @@ contains the application, the harness and the client — nothing stateful.
 ### Start the platform, once
 
 ```bash
-cd syamdev-platform
+cd platform
 cp .env.example .env          # fill it in
 ./bootstrap.sh                # creates the syamdev-edge and syamdev-data networks
 
@@ -522,7 +522,7 @@ compose.platform.yaml up -d`.
 ### Metrics
 
 ```bash
-cd syamdev-observability && docker compose --env-file .env -f compose.yaml up -d
+cd observability && docker compose --env-file .env -f compose.yaml up -d
 ```
 
 Grafana on :3001, Prometheus on :9090. Targets are discovered from Docker labels, so that repo
@@ -640,8 +640,8 @@ hidden view would both lie to the sender and zero your own unread count.
 - **Postgres publishes on host port `55432`, not `5432`.** The development machine runs a native
   Postgres bound to `0.0.0.0:5432`, which prevents Docker binding loopback `5432` at all. The
   container-side port is unchanged and `POSTGRES_PORT` overrides it.
-- **Infrastructure moved out of this repo entirely**, to `syamdev-platform` and
-  `syamdev-observability`, once the box stopped hosting only this app. That gives up R7 knowingly:
+- **Infrastructure moved out of this repo entirely**, to `platform` and
+  `observability`, once the box stopped hosting only this app. That gives up R7 knowingly:
   see §8.
 - **Topic, consumer group and search index are configurable** and tenant-prefixed on the
   platform, because a shared broker and cluster only grant a tenant its own prefix. Defaults keep

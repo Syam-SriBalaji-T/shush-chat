@@ -51,8 +51,8 @@
 **All eight phases are complete.** See [`implementation.md`](implementation.md) for what exists,
 the test counts, and every divergence from this plan.
 
-Infrastructure has since moved to two sibling repositories — `syamdev-platform` (Postgres, Redis,
-Redpanda, Elasticsearch, MinIO, nginx) and `syamdev-observability` (Prometheus, Grafana) — because
+Infrastructure has since moved to two sibling repositories — `platform` (Postgres, Redis,
+Redpanda, Elasticsearch, MinIO, nginx) and `observability` (Prometheus, Grafana) — because
 this is no longer the only application that will run on the box. This repository now contains the
 application, the harness, the client and the docs. The layout in §4 below describes the original
 single-repo plan.
@@ -410,7 +410,7 @@ skip this tick — never queue.
 
 > The tree below is the original single-repo plan. `compose.yaml`, `compose.replicas.yaml`,
 > `compose.observability.yaml` and `infra/` no longer live here; they moved to
-> `syamdev-platform` and `syamdev-observability`. This repo gained `compose.platform.yaml`
+> `platform` and `observability`. This repo gained `compose.platform.yaml`
 > (three stateless replicas, no infrastructure) and `docs/implementation.md`. Everything under
 > `api/`, `bench/` and `web/` is as planned.
 

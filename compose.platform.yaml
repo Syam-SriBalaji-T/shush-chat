@@ -3,12 +3,12 @@
 #   docker compose --env-file .env -f compose.platform.yaml up -d --build
 #
 # This file has NO infrastructure of its own -- Postgres, Redis, Redpanda, Elasticsearch, MinIO
-# and nginx all live in syamdev-platform. It brings up the three stateless replicas and joins
+# and nginx all live in platform. It brings up the three stateless replicas and joins
 # them to the shared networks. It is the only compose file this repo has: the standalone
 # compose.yaml was removed when the box stopped hosting only this app, which gives up aim.md R7
 # knowingly rather than quietly -- see README section 8.
 #
-# Requires: syamdev-platform/bootstrap.sh has been run, and its data, streaming, search and
+# Requires: platform/bootstrap.sh has been run, and its data, streaming, search and
 # edge stacks are up. The ten values marked `# shared` in .env must match the platform's.
 
 name: shush

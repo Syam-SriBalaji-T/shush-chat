@@ -37,7 +37,7 @@ presenting laptop figures as a headline number.
 | Integration (`api`) | 170 | Real Postgres, Redis, Redpanda, Elasticsearch, MinIO and Chrome via Testcontainers. Nothing mocked |
 | Unit (`api`) | 11 | Pure logic only |
 | Harness self-tests (`bench`) | 17 | Each invariant fed a violating stream, asserted to report it |
-| Isolation (`syamdev-platform`) | 5 checks | Cross-tenant access attempted with real credentials |
+| Isolation (`platform`) | 5 checks | Cross-tenant access attempted with real credentials |
 
 ---
 
@@ -49,8 +49,8 @@ Everything below is a deliberate departure, with the reason.
 
 `plan.md` §4 puts `compose.yaml`, `compose.replicas.yaml`, `compose.observability.yaml` and
 `infra/` in this repo. They are gone. Shared services now live in
-[`syamdev-platform`](https://github.com/Syam-SriBalaji-T/syamdev-platform) and
-[`syamdev-observability`](https://github.com/Syam-SriBalaji-T/syamdev-observability), because
+[`platform`](https://github.com/shipyardworks/platform) and
+[`observability`](https://github.com/shipyardworks/observability), because
 this stopped being the only app that will run on the box. This repo keeps
 `compose.platform.yaml`: three stateless replicas and nothing else.
 

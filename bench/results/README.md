@@ -20,11 +20,11 @@ load driver   same machine as the system under test
 ## How to reproduce
 
 ```bash
-# platform stacks first (syamdev-platform): data, streaming, search, edge
+# platform stacks first (the platform repo): data, streaming, search, edge
 docker compose --env-file .env -f compose.platform.yaml up -d --build
 
 # nginx resolves upstreams once at startup, so restart it after the replicas are recreated
-docker compose --env-file .env -f edge/compose.yaml restart nginx   # in syamdev-platform
+docker compose --env-file .env -f edge/compose.yaml restart nginx   # in the platform repo
 
 cd bench && ./mvnw clean package && cd ..
 java -jar bench/target/shush-bench.jar --mode=ordering --via=nginx \
